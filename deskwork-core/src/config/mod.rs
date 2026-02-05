@@ -4,4 +4,4 @@
 
 mod settings;
 
-pub use settings::{model_display_name, Settings, Theme, DEFAULT_MODEL};
+pub use settings::{model_display_name, RenderMode, Settings, Theme, DEFAULT_MODEL};

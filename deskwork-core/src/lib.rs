@@ -22,7 +22,7 @@ pub mod prompts;
 pub mod tools;
 
 // Re-exports for convenience
-pub use config::{model_display_name, Settings, Theme, DEFAULT_MODEL};
+pub use config::{model_display_name, RenderMode, Settings, Theme, DEFAULT_MODEL};
 pub use db::Database;
 
 // Re-export auth

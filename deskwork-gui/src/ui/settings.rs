@@ -281,6 +281,40 @@ pub fn render(app: &mut DeskworkApp, ctx: &egui::Context) {
                 }
             });
 
+            ui.add_space(16.0);
+
+            // Rendering
+            ui.heading("Rendering");
+            ui.separator();
+
+            ui.horizontal(|ui| {
+                ui.label("Mode:");
+                ui.add_space(8.0);
+
+                let is_software =
+                    app.settings.render_mode == deskwork_core::RenderMode::Software;
+                if ui.selectable_label(!is_software, "Auto (GPU)").clicked()
+                    && is_software
+                {
+                    app.settings.render_mode = deskwork_core::RenderMode::Auto;
+                }
+                if ui.selectable_label(is_software, "Software (CPU)").clicked()
+                    && !is_software
+                {
+                    app.settings.render_mode = deskwork_core::RenderMode::Software;
+                }
+            });
+
+            ui.label(
+                RichText::new(
+                    "Software mode uses CPU rendering — ideal for terminal servers \
+                     and VMs without GPU access. Requires restart.",
+                )
+                .size(11.0)
+                .color(muted)
+                .italics(),
+            );
+
             ui.add_space(24.0);
             ui.separator();
 

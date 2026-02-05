@@ -83,6 +83,40 @@ pub fn model_display_name(model_id: &str) -> String {
 }
 
 // =============================================================================
+// Render Mode
+// =============================================================================
+
+/// Rendering mode for the application.
+///
+/// Controls whether the app uses GPU hardware acceleration or falls back
+/// to CPU-based software rendering. Software mode is useful for terminal
+/// servers and virtual machines without GPU access.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub enum RenderMode {
+    /// Prefer GPU acceleration, fall back to software if unavailable.
+    #[default]
+    Auto,
+    /// Force CPU-based software rendering (no GPU required).
+    Software,
+}
+
+impl RenderMode {
+    /// Get all available render modes.
+    pub fn all() -> &'static [RenderMode] {
+        &[Self::Auto, Self::Software]
+    }
+}
+
+impl std::fmt::Display for RenderMode {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Auto => write!(f, "Auto (GPU preferred)"),
+            Self::Software => write!(f, "Software (CPU only)"),
+        }
+    }
+}
+
+// =============================================================================
 // Application Settings
 // =============================================================================
 
@@ -112,6 +146,11 @@ pub struct Settings {
     /// UI theme.
     pub theme: Theme,
 
+    /// Rendering mode (GPU vs software).
+    /// Requires app restart to take effect.
+    #[serde(default)]
+    pub render_mode: RenderMode,
+
     /// Show thinking process in UI.
     pub show_thinking: bool,
 
@@ -133,6 +172,7 @@ impl Default for Settings {
             extended_thinking: true,
             thinking_budget: 10000,
             theme: Theme::default(),
+            render_mode: RenderMode::default(),
             show_thinking: true,
             working_directory: None,
         }
@@ -242,6 +282,60 @@ mod tests {
         let json = serde_json::to_string(&Theme::Light).unwrap();
         let parsed: Theme = serde_json::from_str(&json).unwrap();
         assert_eq!(parsed, Theme::Light);
+    }
+
+    // -------------------------------------------------------------------------
+    // RenderMode Tests
+    // -------------------------------------------------------------------------
+
+    #[test]
+    fn test_render_mode_default_is_auto() {
+        assert_eq!(RenderMode::default(), RenderMode::Auto);
+    }
+
+    #[test]
+    fn test_render_mode_all() {
+        let all = RenderMode::all();
+        assert_eq!(all.len(), 2);
+        assert!(all.contains(&RenderMode::Auto));
+        assert!(all.contains(&RenderMode::Software));
+    }
+
+    #[test]
+    fn test_render_mode_serialization() {
+        let json = serde_json::to_string(&RenderMode::Software).unwrap();
+        let parsed: RenderMode = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed, RenderMode::Software);
+    }
+
+    #[test]
+    fn test_render_mode_display() {
+        assert!(RenderMode::Auto.to_string().contains("GPU"));
+        assert!(RenderMode::Software.to_string().contains("CPU"));
+    }
+
+    #[test]
+    fn test_settings_render_mode_persists() {
+        let (_temp, db) = setup_test_db();
+
+        let mut settings = Settings::default();
+        settings.render_mode = RenderMode::Software;
+        settings.save(&db).unwrap();
+
+        let loaded = Settings::load(&db);
+        assert_eq!(loaded.render_mode, RenderMode::Software);
+    }
+
+    #[test]
+    fn test_settings_render_mode_defaults_on_missing() {
+        let (_temp, db) = setup_test_db();
+
+        // Save settings JSON without render_mode field (simulates old config)
+        let json = r#"{"model":"test","max_tokens":4096,"temperature":0.7,"extended_thinking":false,"thinking_budget":10000,"theme":"Dark","show_thinking":true}"#;
+        db.set_setting("settings", json).unwrap();
+
+        let loaded = Settings::load(&db);
+        assert_eq!(loaded.render_mode, RenderMode::Auto);
     }
 
     // -------------------------------------------------------------------------
