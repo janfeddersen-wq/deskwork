@@ -1,0 +1,132 @@
+name: Build and Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version tag (e.g., v0.1.0)'
+        required: true
+        default: 'v0.1.0'
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            artifact_name: deskwork
+            asset_name: deskwork-linux-x86_64
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            artifact_name: deskwork.exe
+            asset_name: deskwork-windows-x86_64.exe
+          - os: macos-latest
+            target: x86_64-apple-darwin
+            artifact_name: deskwork
+            asset_name: deskwork-macos-x86_64
+          - os: macos-latest
+            target: aarch64-apple-darwin
+            artifact_name: deskwork
+            asset_name: deskwork-macos-aarch64
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-action@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Install Linux dependencies
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libgtk-3-dev libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev libxkbcommon-dev libssl-dev
+
+      - name: Build release binary
+        run: cargo build --release --target ${{ matrix.target }} -p deskwork-gui
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.asset_name }}
+          path: target/${{ matrix.target }}/release/${{ matrix.artifact_name }}
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch'
+    
+    permissions:
+      contents: write
+
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Display structure of downloaded files
+        run: ls -la artifacts/
+
+      - name: Prepare release assets
+        run: |
+          mkdir -p release
+          cp artifacts/deskwork-linux-x86_64/deskwork release/deskwork-linux-x86_64
+          cp artifacts/deskwork-windows-x86_64.exe/deskwork.exe release/deskwork-windows-x86_64.exe
+          cp artifacts/deskwork-macos-x86_64/deskwork release/deskwork-macos-x86_64
+          cp artifacts/deskwork-macos-aarch64/deskwork release/deskwork-macos-aarch64
+          chmod +x release/deskwork-linux-x86_64
+          chmod +x release/deskwork-macos-x86_64
+          chmod +x release/deskwork-macos-aarch64
+
+      - name: Get version
+        id: version
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "version=${{ github.event.inputs.version }}" >> $GITHUB_OUTPUT
+          else
+            echo "version=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: ${{ steps.version.outputs.version }}
+          name: Deskwork ${{ steps.version.outputs.version }}
+          draft: false
+          prerelease: false
+          files: |
+            release/deskwork-linux-x86_64
+            release/deskwork-windows-x86_64.exe
+            release/deskwork-macos-x86_64
+            release/deskwork-macos-aarch64
+          body: |
+            ## Deskwork ${{ steps.version.outputs.version }}
+            
+            Claude-powered coding assistant with GUI.
+            
+            ### Downloads
+            - **Linux (x86_64)**: `deskwork-linux-x86_64`
+            - **Windows (x86_64)**: `deskwork-windows-x86_64.exe`
+            - **macOS (Intel)**: `deskwork-macos-x86_64`
+            - **macOS (Apple Silicon)**: `deskwork-macos-aarch64`
+            
+            ### Features
+            - Chat interface with Claude AI
+            - Drag & drop image attachments
+            - File operations and shell tools
+            - OAuth authentication
+            - Dark/light theme
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
