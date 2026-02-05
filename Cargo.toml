@@ -30,14 +30,14 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 rusqlite = { version = "0.31", features = ["bundled"] }
 dirs = "5.0"
 
-# serdesAI (local paths)
-serdes-ai = { path = "../serdesAI/serdes-ai" }
-serdes-ai-agent = { path = "../serdesAI/serdes-ai-agent" }
-serdes-ai-core = { path = "../serdesAI/serdes-ai-core" }
-serdes-ai-models = { path = "../serdesAI/serdes-ai-models", features = ["anthropic", "claude-code-oauth"] }
-serdes-ai-tools = { path = "../serdesAI/serdes-ai-tools" }
-serdes-ai-streaming = { path = "../serdesAI/serdes-ai-streaming" }
-serdes-ai-providers = { path = "../serdesAI/serdes-ai-providers" }
+# serdesAI (GitHub)
+serdes-ai = { git = "https://github.com/janfeddersen-wq/serdesAI.git", branch = "main" }
+serdes-ai-agent = { git = "https://github.com/janfeddersen-wq/serdesAI.git", branch = "main" }
+serdes-ai-core = { git = "https://github.com/janfeddersen-wq/serdesAI.git", branch = "main" }
+serdes-ai-models = { git = "https://github.com/janfeddersen-wq/serdesAI.git", branch = "main", features = ["anthropic", "claude-code-oauth"] }
+serdes-ai-tools = { git = "https://github.com/janfeddersen-wq/serdesAI.git", branch = "main" }
+serdes-ai-streaming = { git = "https://github.com/janfeddersen-wq/serdesAI.git", branch = "main" }
+serdes-ai-providers = { git = "https://github.com/janfeddersen-wq/serdesAI.git", branch = "main" }
 
 # GUI
 eframe = "0.29"
