@@ -3,18 +3,20 @@
 //! This module provides the core execution layer that connects Claude to our tools
 //! and streams events back to the GUI.
 
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use tokio::sync::mpsc;
-use tracing::{debug, error, info};
+use tracing::{debug, error, info, warn};
 
 use serdes_ai_agent::{agent, AgentStream, AgentStreamEvent, RunOptions, ToolExecutor};
-use serdes_ai_models::Model;
-use serdes_ai_core::ModelRequest;
 use serdes_ai_core::messages::{ImageMediaType, UserContent, UserContentPart};
+use serdes_ai_core::ModelRequest;
+use serdes_ai_models::Model;
 use serdes_ai_tools::{RunContext as ToolRunContext, Tool, ToolError, ToolReturn};
 
 use crate::config::Settings;
+use crate::plugins::{McpServerEntry, PluginMcpManager, PluginMcpTool};
 use crate::tools::ToolRegistry;
 
 // =============================================================================
@@ -37,22 +39,13 @@ pub enum ExecutorEvent {
     ThinkingDelta(String),
 
     /// Tool call started.
-    ToolCallStart {
-        id: Option<String>,
-        name: String,
-    },
+    ToolCallStart { id: Option<String>, name: String },
 
     /// Tool call arguments streaming.
-    ToolCallDelta {
-        id: Option<String>,
-        delta: String,
-    },
+    ToolCallDelta { id: Option<String>, delta: String },
 
     /// Tool call completed (arguments fully received).
-    ToolCallComplete {
-        id: Option<String>,
-        name: String,
-    },
+    ToolCallComplete { id: Option<String>, name: String },
 
     /// Tool execution result.
     ToolResult {
@@ -118,16 +111,12 @@ impl<Deps: Send + Sync> ToolExecutor<Deps> for ToolWrapper {
         // Create a tool context without deps (our tools don't use deps)
         let tool_ctx = ToolRunContext::minimal(&ctx.model_name)
             .with_run_id(&ctx.run_id)
-            .with_tool_context(
-                self.tool.definition().name(),
-                ctx.tool_call_id.clone(),
-            );
+            .with_tool_context(self.tool.definition().name(), ctx.tool_call_id.clone());
 
         // Call the tool
-        self.tool
-            .call(&tool_ctx, args)
-            .await
-            .map_err(|e| ToolError::execution_failed(format!("{}: {}", self.tool.definition().name(), e)))
+        self.tool.call(&tool_ctx, args).await.map_err(|e| {
+            ToolError::execution_failed(format!("{}: {}", self.tool.definition().name(), e))
+        })
     }
 }
 
@@ -135,37 +124,51 @@ impl<Deps: Send + Sync> ToolExecutor<Deps> for ToolWrapper {
 // Agent Execution
 // =============================================================================
 
+/// Image data with media type for multimodal requests.
+pub struct ImageData {
+    pub data: Vec<u8>,
+    pub media_type: ImageMediaType,
+}
+
+/// Arguments for [`run_agent`].
+pub struct RunAgentArgs {
+    pub access_token: String,
+    pub model_name: String,
+    pub settings: Settings,
+    pub system_prompt: String,
+    pub user_input: String,
+    pub images: Vec<ImageData>,
+    pub message_history: Vec<ModelRequest>,
+    pub plugin_mcp_configs: HashMap<String, McpServerEntry>,
+    pub event_sender: EventSender,
+}
+
 /// Run the agent with streaming output.
 ///
 /// This spawns a background task that streams events back via the channel.
 /// Returns a handle that can be used to abort the generation.
 ///
-/// # Arguments
-///
-/// * `access_token` - OAuth access token from Claude authentication
-/// * `model_name` - The model ID to use (e.g., "claude-sonnet-4-20250514")
-/// * `settings` - User settings (temperature, thinking mode, etc.)
-/// * `system_prompt` - System prompt for the assistant
-/// * `user_input` - The user's message
-/// * `message_history` - Previous conversation messages (optional)
-/// * `event_sender` - Channel to send streaming events
-///
 /// # Example
 ///
 /// ```ignore
-/// use deskwork_core::executor::{run_agent, event_channel, ExecutorEvent};
+/// use std::collections::HashMap;
+///
+/// use deskwork_core::executor::{event_channel, run_agent, ExecutorEvent, RunAgentArgs};
 ///
 /// let (tx, mut rx) = event_channel();
-///
-/// let handle = run_agent(
+/// let args = RunAgentArgs {
 ///     access_token,
-///     "claude-sonnet-4-20250514".to_string(),
+///     model_name: "claude-sonnet-4-20250514".to_string(),
 ///     settings,
 ///     system_prompt,
-///     "Help me write a function".to_string(),
-///     vec![],
-///     tx,
-/// ).await;
+///     user_input: "Help me write a function".to_string(),
+///     images: vec![],
+///     message_history: vec![],
+///     plugin_mcp_configs: HashMap::new(),
+///     event_sender: tx,
+/// };
+///
+/// let handle = run_agent(args);
 ///
 /// // Process events
 /// while let Some(event) = rx.recv().await {
@@ -175,25 +178,23 @@ impl<Deps: Send + Sync> ToolExecutor<Deps> for ToolWrapper {
 ///         _ => {}
 ///     }
 /// }
+///
+/// let _ = handle.await;
 /// ```
-
-/// Image data with media type for multimodal requests.
-pub struct ImageData {
-    pub data: Vec<u8>,
-    pub media_type: ImageMediaType,
-}
-
-pub async fn run_agent(
-    access_token: String,
-    model_name: String,
-    settings: Settings,
-    system_prompt: String,
-    user_input: String,
-    images: Vec<ImageData>,
-    message_history: Vec<ModelRequest>,
-    event_sender: EventSender,
-) -> tokio::task::JoinHandle<()> {
+pub fn run_agent(args: RunAgentArgs) -> tokio::task::JoinHandle<()> {
     tokio::spawn(async move {
+        let RunAgentArgs {
+            access_token,
+            model_name,
+            settings,
+            system_prompt,
+            user_input,
+            images,
+            message_history,
+            plugin_mcp_configs,
+            event_sender,
+        } = args;
+
         info!("Starting agent execution");
 
         // Create the model using OAuth token
@@ -211,15 +212,38 @@ pub async fn run_agent(
             .temperature(1.0)
             .max_tokens(30000);
 
-        // Add each tool by wrapping it
+        // Add each built-in tool by wrapping it
         for tool in registry.tools() {
             let definition = tool.definition();
             let wrapper = ToolWrapper::new(Arc::clone(tool));
             builder = builder.tool_with_executor(definition, wrapper);
         }
 
+        let mut mcp_tool_count = 0usize;
+
+        if !plugin_mcp_configs.is_empty() {
+            let mcp_manager =
+                Arc::new(PluginMcpManager::connect_from_configs(&plugin_mcp_configs).await);
+
+            for (server, reason) in mcp_manager.unavailable_connectors() {
+                warn!(server = %server, reason = %reason, "MCP connector unavailable");
+            }
+
+            for meta in mcp_manager.list_all_tools().into_values() {
+                let tool = PluginMcpTool::new(Arc::clone(&mcp_manager), meta);
+                let definition = tool.definition();
+                let wrapper = ToolWrapper::new(Arc::new(tool));
+                builder = builder.tool_with_executor(definition, wrapper);
+                mcp_tool_count += 1;
+            }
+        }
+
         let agent = builder.build();
-        debug!(tools = registry.len(), "Agent built with tools");
+        debug!(
+            builtin_tools = registry.len(),
+            mcp_tools = mcp_tool_count,
+            "Agent built with tools"
+        );
 
         // Prepare run options with history
         let options = if message_history.is_empty() {
@@ -245,10 +269,7 @@ pub async fn run_agent(
             UserContent::parts(parts)
         };
 
-        info!(
-            "Sending request with {} images",
-            images.len()
-        );
+        info!("Sending request with {} images", images.len());
 
         // Run with streaming
         match AgentStream::new(&agent, user_content, (), options).await {
@@ -272,7 +293,8 @@ async fn process_stream(mut stream: AgentStream, sender: EventSender) {
             Ok(event) => {
                 let executor_event = convert_event(event);
                 if let Some(ev) = executor_event {
-                    let is_done = matches!(ev, ExecutorEvent::Done { .. } | ExecutorEvent::Error(_));
+                    let is_done =
+                        matches!(ev, ExecutorEvent::Done { .. } | ExecutorEvent::Error(_));
                     if sender.send(ev).is_err() {
                         debug!("Event receiver dropped, stopping stream");
                         break;
@@ -365,7 +387,9 @@ mod tests {
     #[test]
     fn test_event_channel() {
         let (tx, _rx) = event_channel();
-        assert!(tx.send(ExecutorEvent::TextDelta("test".to_string())).is_ok());
+        assert!(tx
+            .send(ExecutorEvent::TextDelta("test".to_string()))
+            .is_ok());
     }
 
     #[test]
@@ -395,7 +419,7 @@ mod tests {
         let result = convert_event(event);
         assert!(matches!(
             result,
-            Some(ExecutorEvent::ToolCallStart { name, id }) 
+            Some(ExecutorEvent::ToolCallStart { name, id })
             if name == "read_file" && id == Some("call_123".to_string())
         ));
     }

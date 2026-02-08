@@ -11,14 +11,20 @@
 //! - Claude model integration via serdes-ai
 //! - Agent executor for running Claude with tools
 //! - System prompts for the coding assistant
+//! - External tools management (UV download and installation)
+//! - Python environment management (venv creation, package installation)
 
 pub mod auth;
 pub mod claude;
 pub mod config;
 pub mod db;
 pub mod executor;
+pub mod external_tools;
 pub mod models;
+pub mod plugins;
 pub mod prompts;
+pub mod python;
+pub mod skills;
 pub mod tools;
 
 // Re-exports for convenience
@@ -39,7 +45,9 @@ pub use models::{ModelConfig, ModelConfigError, ModelRegistry, ModelType};
 pub use claude::{create_model, create_model_with_thinking};
 
 // Re-export executor
-pub use executor::{event_channel, run_agent, EventReceiver, EventSender, ExecutorEvent, ImageData};
+pub use executor::{
+    event_channel, run_agent, EventReceiver, EventSender, ExecutorEvent, ImageData, RunAgentArgs,
+};
 
 // Re-export image types for multimodal requests
 pub use serdes_ai_core::messages::ImageMediaType;
@@ -51,6 +59,32 @@ pub use prompts::{build_system_prompt, SYSTEM_PROMPT};
 pub use tools::{
     DeleteFileTool, EditFileTool, FileError, GrepTool, ListFilesTool, ReadFileTool,
     RunShellCommandTool, ToolRegistry,
+};
+
+// Re-export plugins
+pub use plugins::{
+    build_command_prompt, build_namespaced_mcp_map, build_plugin_prompt_block, command_suggestions,
+    command_suggestions_rich, discover_plugins, load_all_bundled_plugins,
+    load_bundled_legal_plugin, load_bundled_plugins, load_plugin, parse_frontmatter,
+    parse_slash_command, resolve_entry_placeholders, CommandFile, CommandFrontmatter,
+    ContextBudget, McpBridgeResult, McpServerEntry, McpServersFile, NamespacedMcpTool,
+    ParsedSlashCommand, Plugin, PluginAuthor, PluginContext, PluginLoadError, PluginManifest,
+    PluginMcpManager, PluginMcpTool, PluginRegistry, PluginRuntime, PluginStatus, SkillFile,
+    SkillFrontmatter, SlashCommandSuggestion, UnavailableConnector,
+};
+
+// Re-export skills
+pub use skills::{
+    discover_skills, extract_skills_if_needed, get_skill_path, SkillMetadata, SkillsContext,
+};
+
+// Re-export external tools
+pub use external_tools::{ExternalToolId, ExternalToolManager, Platform, ToolStatus};
+
+// Re-export python utilities
+pub use python::{
+    create_venv, ensure_venv, get_venv_python, is_uv_installed, pip_install,
+    pip_install_requirements, run_python_module, run_python_script,
 };
 
 /// Library version
@@ -88,7 +122,14 @@ mod tests {
     #[test]
     fn prompts_exported() {
         assert!(!SYSTEM_PROMPT.is_empty());
-        let prompt = build_system_prompt(false, None);
+        let prompt = build_system_prompt(false, None, None, None);
         assert!(prompt.contains("Deskwork"));
+    }
+
+    #[test]
+    fn external_tools_module_accessible() {
+        // Verify external tools types are accessible
+        let _all = ExternalToolId::all();
+        let _platform = Platform::detect();
     }
 }

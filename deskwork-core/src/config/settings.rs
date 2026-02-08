@@ -41,6 +41,19 @@ impl std::fmt::Display for Theme {
 /// Default model to use when none is selected.
 /// Uses prefixed name for consistency with registry.
 pub const DEFAULT_MODEL: &str = "claude-code-claude-sonnet-4-20250514";
+pub const DEFAULT_PLUGIN_CONTEXT_TOKEN_BUDGET: u32 = 6000;
+
+fn default_plugins_enabled() -> Vec<String> {
+    Vec::new()
+}
+
+fn default_plugin_context_token_budget() -> u32 {
+    DEFAULT_PLUGIN_CONTEXT_TOKEN_BUDGET
+}
+
+fn default_stream_markdown_enabled() -> bool {
+    true
+}
 
 /// Get display name for a model ID.
 ///
@@ -52,9 +65,7 @@ pub const DEFAULT_MODEL: &str = "claude-code-claude-sonnet-4-20250514";
 ///   - `claude-3-5-sonnet-20241022` -> "Claude 3.5 Sonnet"
 pub fn model_display_name(model_id: &str) -> String {
     // Strip claude-code- prefix if present
-    let stripped = model_id
-        .strip_prefix("claude-code-")
-        .unwrap_or(model_id);
+    let stripped = model_id.strip_prefix("claude-code-").unwrap_or(model_id);
 
     // Determine family
     let family = if stripped.contains("sonnet") {
@@ -154,8 +165,24 @@ pub struct Settings {
     /// Show thinking process in UI.
     pub show_thinking: bool,
 
+    /// Render streamed assistant output as markdown.
+    #[serde(default = "default_stream_markdown_enabled")]
+    pub stream_markdown_enabled: bool,
+
     /// Working directory for file operations.
     pub working_directory: Option<String>,
+
+    /// List of enabled plugin IDs.
+    #[serde(default = "default_plugins_enabled")]
+    pub plugins_enabled: Vec<String>,
+
+    /// Optional plugin directory override.
+    #[serde(default)]
+    pub plugins_dir: Option<String>,
+
+    /// Token budget reserved for plugin context in prompts.
+    #[serde(default = "default_plugin_context_token_budget")]
+    pub plugin_context_token_budget: u32,
 }
 
 impl Default for Settings {
@@ -174,7 +201,11 @@ impl Default for Settings {
             theme: Theme::default(),
             render_mode: RenderMode::default(),
             show_thinking: true,
+            stream_markdown_enabled: default_stream_markdown_enabled(),
             working_directory: None,
+            plugins_enabled: default_plugins_enabled(),
+            plugins_dir: None,
+            plugin_context_token_budget: default_plugin_context_token_budget(),
         }
     }
 }
@@ -213,6 +244,7 @@ impl Settings {
         // Ensure reasonable token limits
         self.max_tokens = self.max_tokens.clamp(256, 32768);
         self.thinking_budget = self.thinking_budget.clamp(1000, 100000);
+        self.plugin_context_token_budget = self.plugin_context_token_budget.clamp(500, 100_000);
 
         // Ensure model is set
         if self.model.is_empty() {
@@ -230,9 +262,7 @@ impl Settings {
         self.available_models = models;
 
         // If current model isn't in the list, use first available
-        if !self.available_models.is_empty()
-            && !self.available_models.contains(&self.model)
-        {
+        if !self.available_models.is_empty() && !self.available_models.contains(&self.model) {
             // Try to find a sonnet model first
             if let Some(sonnet) = self.available_models.iter().find(|m| m.contains("sonnet")) {
                 self.model = sonnet.clone();
@@ -336,6 +366,7 @@ mod tests {
 
         let loaded = Settings::load(&db);
         assert_eq!(loaded.render_mode, RenderMode::Auto);
+        assert!(loaded.stream_markdown_enabled);
     }
 
     // -------------------------------------------------------------------------
@@ -386,10 +417,7 @@ mod tests {
         );
 
         // Unknown models return as-is
-        assert_eq!(
-            model_display_name("unknown-model"),
-            "unknown-model"
-        );
+        assert_eq!(model_display_name("unknown-model"), "unknown-model");
     }
 
     // -------------------------------------------------------------------------
@@ -407,8 +435,15 @@ mod tests {
         assert_eq!(settings.thinking_budget, 10000);
         assert_eq!(settings.theme, Theme::Dark);
         assert!(settings.show_thinking);
+        assert!(settings.stream_markdown_enabled);
         assert!(settings.working_directory.is_none());
         assert!(settings.available_models.is_empty());
+        assert!(settings.plugins_enabled.is_empty());
+        assert!(settings.plugins_dir.is_none());
+        assert_eq!(
+            settings.plugin_context_token_budget,
+            DEFAULT_PLUGIN_CONTEXT_TOKEN_BUDGET
+        );
     }
 
     #[test]
@@ -421,7 +456,11 @@ mod tests {
         original.max_tokens = 16384;
         original.temperature = 0.5;
         original.theme = Theme::Light;
+        original.stream_markdown_enabled = false;
         original.working_directory = Some("/home/user/project".to_string());
+        original.plugins_enabled = vec!["legal".to_string()];
+        original.plugins_dir = Some("/tmp/deskwork/plugins".to_string());
+        original.plugin_context_token_budget = 7000;
 
         // Save
         original.save(&db).unwrap();
@@ -434,10 +473,17 @@ mod tests {
         assert_eq!(loaded.max_tokens, 16384);
         assert!((loaded.temperature - 0.5).abs() < f32::EPSILON);
         assert_eq!(loaded.theme, Theme::Light);
+        assert!(!loaded.stream_markdown_enabled);
         assert_eq!(
             loaded.working_directory,
             Some("/home/user/project".to_string())
         );
+        assert_eq!(loaded.plugins_enabled, vec!["legal".to_string()]);
+        assert_eq!(
+            loaded.plugins_dir,
+            Some("/tmp/deskwork/plugins".to_string())
+        );
+        assert_eq!(loaded.plugin_context_token_budget, 7000);
     }
 
     #[test]
@@ -508,6 +554,36 @@ mod tests {
         settings.model = String::new();
         settings.validate();
         assert_eq!(settings.model, DEFAULT_MODEL);
+    }
+
+    #[test]
+    fn test_settings_validate_clamps_plugin_context_budget() {
+        let mut settings = Settings::default();
+
+        settings.plugin_context_token_budget = 100;
+        settings.validate();
+        assert_eq!(settings.plugin_context_token_budget, 500);
+
+        settings.plugin_context_token_budget = 1_000_000;
+        settings.validate();
+        assert_eq!(settings.plugin_context_token_budget, 100_000);
+    }
+
+    #[test]
+    fn test_settings_plugin_fields_default_on_missing() {
+        let (_temp, db) = setup_test_db();
+
+        let json = r#"{"model":"test","max_tokens":4096,"temperature":0.7,"extended_thinking":false,"thinking_budget":10000,"theme":"Dark","show_thinking":true,"render_mode":"Auto"}"#;
+        db.set_setting("settings", json).unwrap();
+
+        let loaded = Settings::load(&db);
+        assert!(loaded.plugins_enabled.is_empty());
+        assert!(loaded.plugins_dir.is_none());
+        assert_eq!(
+            loaded.plugin_context_token_budget,
+            DEFAULT_PLUGIN_CONTEXT_TOKEN_BUDGET
+        );
+        assert!(loaded.stream_markdown_enabled);
     }
 
     #[test]

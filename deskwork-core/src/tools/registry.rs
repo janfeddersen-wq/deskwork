@@ -7,12 +7,8 @@ use std::sync::Arc;
 use serdes_ai_tools::Tool;
 
 use super::{
-    delete_file_tool::DeleteFileTool,
-    edit_file_tool::EditFileTool,
-    grep_tool::GrepTool,
-    list_files_tool::ListFilesTool,
-    read_file_tool::ReadFileTool,
-    shell_tool::RunShellCommandTool,
+    delete_file_tool::DeleteFileTool, edit_file_tool::EditFileTool, grep_tool::GrepTool,
+    list_files_tool::ListFilesTool, read_file_tool::ReadFileTool, shell_tool::RunShellCommandTool,
 };
 
 /// Registry of all available tools.

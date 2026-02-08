@@ -3,7 +3,7 @@ members = ["deskwork-core", "deskwork-gui"]
 resolver = "2"
 
 [workspace.package]
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
 license = "MIT"
 authors = ["Jan Feddersen"]
@@ -38,6 +38,8 @@ serdes-ai-models = { git = "https://github.com/janfeddersen-wq/serdesAI.git", br
 serdes-ai-tools = { git = "https://github.com/janfeddersen-wq/serdesAI.git", branch = "main" }
 serdes-ai-streaming = { git = "https://github.com/janfeddersen-wq/serdesAI.git", branch = "main" }
 serdes-ai-providers = { git = "https://github.com/janfeddersen-wq/serdesAI.git", branch = "main" }
+serdes-ai-mcp = { git = "https://github.com/janfeddersen-wq/serdesAI.git", branch = "main", features = ["reqwest"] }
+serdes-ai-toolsets = { git = "https://github.com/janfeddersen-wq/serdesAI.git", branch = "main" }
 
 # GUI
 eframe = "0.29"
@@ -48,5 +50,6 @@ egui_extras = { version = "0.29", features = ["syntect"] }
 uuid = { version = "1.0", features = ["v4", "serde"] }
 chrono = { version = "0.4", features = ["serde"] }
 regex = "1.10"
+glob = "0.3"
 webbrowser = "1.0"
 reqwest = { version = "0.12", features = ["json"] }

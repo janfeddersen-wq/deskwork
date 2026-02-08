@@ -106,7 +106,10 @@ fn format_list_files_output(
     directory: &str,
     recursive: bool,
 ) -> String {
-    let mut output = format!("DIRECTORY LISTING: {} (recursive={})\n", directory, recursive);
+    let mut output = format!(
+        "DIRECTORY LISTING: {} (recursive={})\n",
+        directory, recursive
+    );
 
     for entry in &result.entries {
         let indent = "  ".repeat(entry.depth);

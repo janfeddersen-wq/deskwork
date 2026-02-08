@@ -300,8 +300,8 @@ pub async fn run_claude_code_auth(
 
     // Save tokens to database (in a block so db doesn't live across await)
     {
-        let db =
-            Database::open_at(db_path.clone()).map_err(|e| ClaudeCodeAuthError::Http(e.to_string()))?;
+        let db = Database::open_at(db_path.clone())
+            .map_err(|e| ClaudeCodeAuthError::Http(e.to_string()))?;
         let auth = ClaudeCodeAuth::new(&db);
         auth.save_tokens(&tokens)?;
     }

@@ -108,7 +108,12 @@ fn is_home_directory(path: &Path) -> bool {
 
     // Check common home subdirectories
     const COMMON_SUBDIRS: &[&str] = &[
-        "Documents", "Desktop", "Downloads", "Pictures", "Music", "Videos",
+        "Documents",
+        "Desktop",
+        "Downloads",
+        "Pictures",
+        "Music",
+        "Videos",
     ];
 
     if let Some(parent) = path.parent() {
@@ -125,9 +130,19 @@ fn is_home_directory(path: &Path) -> bool {
 /// Check if a directory looks like a project directory.
 fn is_project_directory(path: &Path) -> bool {
     const INDICATORS: &[&str] = &[
-        "package.json", "pyproject.toml", "Cargo.toml", "pom.xml",
-        "build.gradle", "CMakeLists.txt", ".git", "requirements.txt",
-        "composer.json", "Gemfile", "go.mod", "Makefile", "setup.py",
+        "package.json",
+        "pyproject.toml",
+        "Cargo.toml",
+        "pom.xml",
+        "build.gradle",
+        "CMakeLists.txt",
+        ".git",
+        "requirements.txt",
+        "composer.json",
+        "Gemfile",
+        "go.mod",
+        "Makefile",
+        "setup.py",
     ];
 
     if let Ok(entries) = fs::read_dir(path) {
@@ -163,8 +178,7 @@ pub fn list_files(
     }
 
     // Auto-disable recursion for home directories (unless it's a project)
-    let effective_recursive =
-        recursive && !(is_home_directory(path) && !is_project_directory(path));
+    let effective_recursive = recursive && (!is_home_directory(path) || is_project_directory(path));
 
     let max_entries = max_entries
         .unwrap_or(LIST_FILES_DEFAULT_MAX_ENTRIES)
@@ -189,16 +203,16 @@ pub fn list_files(
     list_files_recursive(&mut ctx, path, 0)?;
 
     // Calculate totals
-    let (total_files, total_dirs, total_size) = entries.iter().fold(
-        (0, 0, 0u64),
-        |(files, dirs, size), entry| {
-            if entry.is_dir {
-                (files, dirs + 1, size)
-            } else {
-                (files + 1, dirs, size + entry.size)
-            }
-        },
-    );
+    let (total_files, total_dirs, total_size) =
+        entries
+            .iter()
+            .fold((0, 0, 0u64), |(files, dirs, size), entry| {
+                if entry.is_dir {
+                    (files, dirs + 1, size)
+                } else {
+                    (files + 1, dirs, size + entry.size)
+                }
+            });
 
     Ok(ListFilesResult {
         entries,
@@ -428,7 +442,9 @@ pub fn grep(
     #[allow(unused_imports)]
     use std::io::{BufRead, BufReader};
 
-    let max_matches = max_results.unwrap_or(GREP_MAX_MATCHES).min(GREP_MAX_MATCHES);
+    let max_matches = max_results
+        .unwrap_or(GREP_MAX_MATCHES)
+        .min(GREP_MAX_MATCHES);
 
     if pattern.is_empty() {
         return Err(FileError::Io(std::io::Error::new(
@@ -464,17 +480,21 @@ pub fn grep(
         pattern.to_string()
     };
 
-    let re = Regex::new(&regex_pattern).or_else(|_| {
-        let escaped = regex::escape(pattern);
-        if case_insensitive {
-            Regex::new(&format!("(?i){}", escaped))
-        } else {
-            Regex::new(&escaped)
-        }
-    }).map_err(|e| FileError::Io(std::io::Error::new(
-        std::io::ErrorKind::InvalidInput,
-        format!("invalid pattern: {}", e),
-    )))?;
+    let re = Regex::new(&regex_pattern)
+        .or_else(|_| {
+            let escaped = regex::escape(pattern);
+            if case_insensitive {
+                Regex::new(&format!("(?i){}", escaped))
+            } else {
+                Regex::new(&escaped)
+            }
+        })
+        .map_err(|e| {
+            FileError::Io(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                format!("invalid pattern: {}", e),
+            ))
+        })?;
 
     let mut matches = Vec::new();
     grep_recursive(&re, path, path, &mut matches, max_matches, 0)?;
@@ -630,8 +650,16 @@ mod tests {
 
         let result = list_files(dir.path().to_str().unwrap(), true, None, None).unwrap();
 
-        let root_entry = result.entries.iter().find(|e| e.name == "root.txt").unwrap();
-        let child_entry = result.entries.iter().find(|e| e.name == "child.txt").unwrap();
+        let root_entry = result
+            .entries
+            .iter()
+            .find(|e| e.name == "root.txt")
+            .unwrap();
+        let child_entry = result
+            .entries
+            .iter()
+            .find(|e| e.name == "child.txt")
+            .unwrap();
 
         assert_eq!(root_entry.depth, 0);
         assert_eq!(child_entry.depth, 1);

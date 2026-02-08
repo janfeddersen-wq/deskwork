@@ -25,3 +25,4 @@ egui_extras.workspace = true
 chrono.workspace = true
 rfd = "0.15"
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "gif", "webp"] }
+streamdown-parser = { git = "https://github.com/fed-stew/streamdown-rs", package = "streamdown-parser", rev = "e9aff44364df07de0646cbe0403a158f8cd4ee72" }

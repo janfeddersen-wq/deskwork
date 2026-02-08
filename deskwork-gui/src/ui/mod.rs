@@ -3,6 +3,7 @@
 pub mod attachments;
 pub mod chat;
 pub mod input;
+pub mod markdown;
 pub mod menu;
 pub mod settings;
 pub mod status;
@@ -53,15 +54,6 @@ pub mod colors {
             Color32::from_rgb(156, 163, 175)
         } else {
             Color32::from_rgb(100, 100, 110)
-        }
-    }
-
-    /// Get primary text color based on theme
-    pub fn text(visuals: &Visuals) -> Color32 {
-        if visuals.dark_mode {
-            Color32::from_rgb(229, 231, 235)
-        } else {
-            Color32::from_rgb(30, 30, 35)
         }
     }
 

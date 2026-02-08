@@ -76,10 +76,18 @@ impl Tool for RunShellCommandTool {
             "Executing command"
         );
 
-        match execute_command(&args.command, args.working_directory.as_deref(), timeout_secs).await
+        match execute_command(
+            &args.command,
+            args.working_directory.as_deref(),
+            timeout_secs,
+        )
+        .await
         {
             Ok(result) => Ok(ToolReturn::text(result)),
-            Err(e) => Ok(ToolReturn::error(format!("Command execution failed: {}", e))),
+            Err(e) => Ok(ToolReturn::error(format!(
+                "Command execution failed: {}",
+                e
+            ))),
         }
     }
 }
@@ -145,9 +153,7 @@ async fn execute_command(
 
     match result {
         Ok((stdout_lines, stderr_lines, exit_status)) => {
-            let exit_code = exit_status
-                .map(|s| s.code().unwrap_or(-1))
-                .unwrap_or(-1);
+            let exit_code = exit_status.map(|s| s.code().unwrap_or(-1)).unwrap_or(-1);
 
             let success = exit_code == 0;
 
@@ -183,10 +189,7 @@ async fn execute_command(
         Err(_) => {
             // Timeout - try to kill process
             let _ = child.kill().await;
-            Err(format!(
-                "Command timed out after {} seconds",
-                timeout_secs
-            ))
+            Err(format!("Command timed out after {} seconds", timeout_secs))
         }
     }
 }

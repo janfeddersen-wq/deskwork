@@ -228,7 +228,11 @@ fn parse_range(range: &str) -> Result<(usize, usize), DiffError> {
 }
 
 fn apply_hunk_to_lines(lines: Vec<String>, hunk: &Hunk) -> Result<Vec<String>, DiffError> {
-    let start_idx = if hunk.old_start == 0 { 0 } else { hunk.old_start - 1 };
+    let start_idx = if hunk.old_start == 0 {
+        0
+    } else {
+        hunk.old_start - 1
+    };
     let mut new_lines = Vec::new();
 
     // Lines before hunk

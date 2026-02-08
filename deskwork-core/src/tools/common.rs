@@ -64,14 +64,56 @@ pub fn get_extension(path: &str) -> Option<&str> {
 /// Check if path is likely a text file.
 pub fn is_text_file(path: &str) -> bool {
     const TEXT_EXTENSIONS: &[&str] = &[
-        "txt", "md", "rs", "py", "js", "ts", "tsx", "jsx", "json", "yaml", "yml",
-        "toml", "ini", "cfg", "html", "css", "scss", "less", "sh", "bash", "zsh",
-        "fish", "c", "h", "cpp", "hpp", "cc", "cxx", "go", "java", "kt", "swift",
-        "rb", "php", "sql", "graphql", "proto", "xml", "svg", "dockerfile", "makefile",
+        "txt",
+        "md",
+        "rs",
+        "py",
+        "js",
+        "ts",
+        "tsx",
+        "jsx",
+        "json",
+        "yaml",
+        "yml",
+        "toml",
+        "ini",
+        "cfg",
+        "html",
+        "css",
+        "scss",
+        "less",
+        "sh",
+        "bash",
+        "zsh",
+        "fish",
+        "c",
+        "h",
+        "cpp",
+        "hpp",
+        "cc",
+        "cxx",
+        "go",
+        "java",
+        "kt",
+        "swift",
+        "rb",
+        "php",
+        "sql",
+        "graphql",
+        "proto",
+        "xml",
+        "svg",
+        "dockerfile",
+        "makefile",
     ];
 
     const TEXT_FILES: &[&str] = &[
-        "Makefile", "Dockerfile", "Rakefile", "Gemfile", ".gitignore", ".env",
+        "Makefile",
+        "Dockerfile",
+        "Rakefile",
+        "Gemfile",
+        ".gitignore",
+        ".env",
     ];
 
     if let Some(ext) = get_extension(path) {
@@ -148,7 +190,12 @@ fn coerce_to_boolean(value: &mut JsonValue, field_name: &str) {
         };
 
         if let Some(b) = coerced {
-            debug!(field = field_name, original = s, coerced = b, "Coerced string to boolean");
+            debug!(
+                field = field_name,
+                original = s,
+                coerced = b,
+                "Coerced string to boolean"
+            );
             *value = JsonValue::Bool(b);
         }
     }
@@ -158,7 +205,12 @@ fn coerce_to_boolean(value: &mut JsonValue, field_name: &str) {
 fn coerce_to_integer(value: &mut JsonValue, field_name: &str) {
     if let Some(s) = value.as_str() {
         if let Ok(i) = s.parse::<i64>() {
-            debug!(field = field_name, original = s, coerced = i, "Coerced string to integer");
+            debug!(
+                field = field_name,
+                original = s,
+                coerced = i,
+                "Coerced string to integer"
+            );
             *value = JsonValue::Number(i.into());
         }
     }
@@ -169,7 +221,12 @@ fn coerce_to_number(value: &mut JsonValue, field_name: &str) {
     if let Some(s) = value.as_str() {
         if let Ok(f) = s.parse::<f64>() {
             if let Some(n) = serde_json::Number::from_f64(f) {
-                debug!(field = field_name, original = s, coerced = f, "Coerced string to number");
+                debug!(
+                    field = field_name,
+                    original = s,
+                    coerced = f,
+                    "Coerced string to number"
+                );
                 *value = JsonValue::Number(n);
             }
         }

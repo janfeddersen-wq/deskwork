@@ -1,5 +1,7 @@
 //! Input area for sending messages.
 
+use std::collections::BTreeMap;
+
 use eframe::egui::{self, Color32, Key, RichText, Rounding, Vec2};
 
 use crate::app::DeskworkApp;
@@ -55,19 +57,16 @@ pub fn render(app: &mut DeskworkApp, ui: &mut egui::Ui) {
                 // Wrap in scroll area with max height of ~4 lines
                 let line_height = ui.text_style_height(&egui::TextStyle::Body);
                 let max_height = line_height * 4.5; // ~4 lines plus a bit of padding
-                
+
                 let response = egui::ScrollArea::vertical()
                     .max_height(max_height)
-                    .show(ui, |ui| {
-                        ui.add(text_edit)
-                    })
+                    .show(ui, |ui| ui.add(text_edit))
                     .inner;
 
                 // Handle Enter to send (without shift)
                 if response.has_focus() {
-                    let enter_pressed = ui.input(|i| {
-                        i.key_pressed(Key::Enter) && !i.modifiers.shift
-                    });
+                    let enter_pressed =
+                        ui.input(|i| i.key_pressed(Key::Enter) && !i.modifiers.shift);
 
                     if enter_pressed && !app.input.trim().is_empty() && !app.is_generating {
                         // Remove the newline that was just added
@@ -89,11 +88,9 @@ pub fn render(app: &mut DeskworkApp, ui: &mut egui::Ui) {
                         if ui
                             .add_sized(
                                 Vec2::new(70.0, 32.0),
-                                egui::Button::new(
-                                    RichText::new("Stop").color(colors::ERROR),
-                                )
-                                .fill(Color32::from_rgb(60, 40, 40))
-                                .rounding(Rounding::same(8.0)),
+                                egui::Button::new(RichText::new("Stop").color(colors::ERROR))
+                                    .fill(Color32::from_rgb(60, 40, 40))
+                                    .rounding(Rounding::same(8.0)),
                             )
                             .clicked()
                         {
@@ -103,10 +100,11 @@ pub fn render(app: &mut DeskworkApp, ui: &mut egui::Ui) {
                         // Send button
                         let can_send = !app.input.trim().is_empty() && app.is_authenticated();
 
-                        let button = egui::Button::new(
-                            RichText::new("Send")
-                                .color(if can_send { Color32::WHITE } else { muted }),
-                        )
+                        let button = egui::Button::new(RichText::new("Send").color(if can_send {
+                            Color32::WHITE
+                        } else {
+                            muted
+                        }))
                         .fill(if can_send {
                             colors::USER_BG
                         } else {
@@ -131,6 +129,63 @@ pub fn render(app: &mut DeskworkApp, ui: &mut egui::Ui) {
                     }
                 });
             });
+
+            // Slash command suggestions
+            if app.input.trim_start().starts_with('/') {
+                let prefix = app.input.split_whitespace().next().unwrap_or_default();
+                let suggestions = app.plugin_runtime.command_suggestions_rich(prefix);
+
+                if !suggestions.is_empty() {
+                    ui.add_space(6.0);
+                    ui.label(
+                        RichText::new("Slash command suggestions")
+                            .size(11.0)
+                            .color(muted),
+                    );
+
+                    let mut grouped: BTreeMap<String, Vec<deskwork_core::SlashCommandSuggestion>> =
+                        BTreeMap::new();
+                    for suggestion in suggestions.into_iter().take(12) {
+                        grouped
+                            .entry(suggestion.plugin_id.clone())
+                            .or_default()
+                            .push(suggestion);
+                    }
+
+                    let mut selected: Option<String> = None;
+
+                    for (plugin_id, items) in grouped {
+                        ui.add_space(4.0);
+                        ui.label(RichText::new(plugin_id).size(11.0).strong().color(muted));
+
+                        for suggestion in items {
+                            let short_description = if suggestion.description.trim().is_empty() {
+                                "No description".to_string()
+                            } else {
+                                suggestion.description.chars().take(80).collect::<String>()
+                            };
+
+                            let label =
+                                format!("{} — {}", suggestion.slash_command, short_description);
+
+                            if ui
+                                .add(
+                                    egui::Button::new(RichText::new(label).size(11.0))
+                                        .fill(colors::tool_bg(ui.visuals()))
+                                        .rounding(Rounding::same(6.0)),
+                                )
+                                .clicked()
+                            {
+                                selected = Some(suggestion.slash_command.clone());
+                            }
+                        }
+                    }
+
+                    if let Some(suggestion) = selected {
+                        app.input = format!("{suggestion} ");
+                    }
+                }
+            }
 
             // Character count and hints
             ui.horizontal(|ui| {

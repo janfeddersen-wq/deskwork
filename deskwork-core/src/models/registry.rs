@@ -41,7 +41,7 @@ impl ModelRegistry {
 
                 Ok(ModelConfig {
                     name: row.get(0)?,
-                    model_type: ModelType::from_str(&model_type_str),
+                    model_type: ModelType::parse_lossy(&model_type_str),
                     model_id: row.get(2)?,
                     context_length: row.get::<_, i64>(3)? as usize,
                     supports_thinking: row.get::<_, i64>(4)? != 0,
@@ -193,7 +193,11 @@ mod tests {
         ModelConfig {
             name: name.to_string(),
             model_type: ModelType::ClaudeCode,
-            model_id: Some(name.strip_prefix("claude-code-").unwrap_or(name).to_string()),
+            model_id: Some(
+                name.strip_prefix("claude-code-")
+                    .unwrap_or(name)
+                    .to_string(),
+            ),
             context_length: 200_000,
             supports_thinking: true,
             supports_vision: true,
@@ -224,7 +228,9 @@ mod tests {
         let config = create_test_model("claude-code-claude-sonnet-4-20250514");
         registry.add(config);
 
-        let model = registry.get("claude-code-claude-sonnet-4-20250514").unwrap();
+        let model = registry
+            .get("claude-code-claude-sonnet-4-20250514")
+            .unwrap();
         assert_eq!(model.name, "claude-code-claude-sonnet-4-20250514");
         assert!(model.supports_thinking);
     }
@@ -252,7 +258,9 @@ mod tests {
         let registry = ModelRegistry::load_from_db(&db).unwrap();
         assert_eq!(registry.len(), 1);
 
-        let loaded = registry.get("claude-code-claude-sonnet-4-20250514").unwrap();
+        let loaded = registry
+            .get("claude-code-claude-sonnet-4-20250514")
+            .unwrap();
         assert_eq!(loaded.name, config.name);
         assert_eq!(loaded.supports_thinking, config.supports_thinking);
     }

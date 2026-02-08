@@ -92,6 +92,8 @@ Your thinking process will be visible to the user, so make it clear and educatio
 pub fn build_system_prompt(
     extended_thinking: bool,
     project_context: Option<&str>,
+    plugin_context: Option<&str>,
+    skills_context: Option<&str>,
 ) -> String {
     let mut prompt = SYSTEM_PROMPT.to_string();
 
@@ -102,6 +104,20 @@ pub fn build_system_prompt(
     if let Some(context) = project_context {
         prompt.push_str("\n\n## Project Context\n\n");
         prompt.push_str(context);
+    }
+
+    if let Some(context) = plugin_context {
+        if !context.trim().is_empty() {
+            prompt.push_str("\n\n## Plugin Context\n\n");
+            prompt.push_str(context);
+        }
+    }
+
+    if let Some(context) = skills_context {
+        if !context.trim().is_empty() {
+            prompt.push_str("\n\n");
+            prompt.push_str(context);
+        }
     }
 
     prompt
@@ -127,29 +143,36 @@ mod tests {
 
     #[test]
     fn test_build_system_prompt_basic() {
-        let prompt = build_system_prompt(false, None);
+        let prompt = build_system_prompt(false, None, None, None);
         assert!(prompt.contains("Deskwork"));
         assert!(!prompt.contains("Extended Thinking"));
     }
 
     #[test]
     fn test_build_system_prompt_with_thinking() {
-        let prompt = build_system_prompt(true, None);
+        let prompt = build_system_prompt(true, None, None, None);
         assert!(prompt.contains("Extended Thinking"));
     }
 
     #[test]
     fn test_build_system_prompt_with_context() {
-        let prompt = build_system_prompt(false, Some("This is a Rust project."));
+        let prompt = build_system_prompt(false, Some("This is a Rust project."), None, None);
         assert!(prompt.contains("Project Context"));
         assert!(prompt.contains("Rust project"));
     }
 
     #[test]
     fn test_build_system_prompt_full() {
-        let prompt = build_system_prompt(true, Some("Full stack web app"));
+        let prompt = build_system_prompt(
+            true,
+            Some("Full stack web app"),
+            Some("Plugins enabled"),
+            None,
+        );
         assert!(prompt.contains("Deskwork"));
         assert!(prompt.contains("Extended Thinking"));
         assert!(prompt.contains("Full stack web app"));
+        assert!(prompt.contains("Plugin Context"));
+        assert!(prompt.contains("Plugins enabled"));
     }
 }

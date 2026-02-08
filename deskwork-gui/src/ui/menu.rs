@@ -37,6 +37,7 @@ pub fn render(app: &mut DeskworkApp, ui: &mut egui::Ui, ctx: &egui::Context) {
         ui.menu_button("Edit", |ui| {
             if ui.button("Settings...").clicked() {
                 app.show_settings = true;
+                app.settings_tab = crate::ui::settings::SettingsTab::default();
                 ui.close_menu();
             }
         });
@@ -45,10 +46,7 @@ pub fn render(app: &mut DeskworkApp, ui: &mut egui::Ui, ctx: &egui::Context) {
         ui.menu_button("View", |ui| {
             let dark_mode = app.settings.theme == deskwork_core::Theme::Dark;
 
-            if ui
-                .checkbox(&mut { dark_mode }, "Dark Mode")
-                .changed()
-            {
+            if ui.checkbox(&mut { dark_mode }, "Dark Mode").changed() {
                 app.settings.theme = if !dark_mode {
                     deskwork_core::Theme::Dark
                 } else {
@@ -119,18 +117,10 @@ pub fn render(app: &mut DeskworkApp, ui: &mut egui::Ui, ctx: &egui::Context) {
                     );
                 }
                 AuthState::Authenticated => {
-                    ui.label(
-                        RichText::new("Signed in")
-                            .color(colors::SUCCESS)
-                            .size(12.0),
-                    );
+                    ui.label(RichText::new("Signed in").color(colors::SUCCESS).size(12.0));
                 }
                 AuthState::Error(_) => {
-                    ui.label(
-                        RichText::new("Auth error")
-                            .color(colors::ERROR)
-                            .size(12.0),
-                    );
+                    ui.label(RichText::new("Auth error").color(colors::ERROR).size(12.0));
                 }
             }
         });

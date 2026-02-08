@@ -5,8 +5,8 @@
 mod app;
 mod ui;
 
-use eframe::egui;
 use deskwork_core::{Database, RenderMode, Settings};
+use eframe::egui;
 
 fn main() -> eframe::Result<()> {
     // Initialize logging

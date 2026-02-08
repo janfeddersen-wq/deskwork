@@ -18,6 +18,12 @@ const MAX_IMAGE_DIMENSION: u32 = 1024;
 /// Supported image extensions
 const IMAGE_EXTENSIONS: &[&str] = &["png", "jpg", "jpeg", "gif", "webp", "bmp"];
 
+/// Supported text-like document extensions for prompt intake
+const TEXT_EXTENSIONS: &[&str] = &[
+    "txt", "md", "markdown", "rst", "csv", "json", "yaml", "yml", "toml", "log", "xml", "html",
+    "htm", "rs", "py", "js", "ts", "java", "c", "h", "cpp", "go", "sh", "sql",
+];
+
 /// A pending image attachment
 #[derive(Clone)]
 pub struct PendingImage {
@@ -27,9 +33,6 @@ pub struct PendingImage {
     pub thumbnail: egui::TextureHandle,
     /// PNG bytes for sending (resized)
     pub data: Vec<u8>,
-    /// Image dimensions after processing
-    pub width: u32,
-    pub height: u32,
 }
 
 /// Check if a path is a supported image file
@@ -40,14 +43,29 @@ pub fn is_image_file(path: &Path) -> bool {
         .unwrap_or(false)
 }
 
+/// Check if a path is a supported text file for prompt intake
+pub fn is_text_file(path: &Path) -> bool {
+    path.extension()
+        .and_then(|ext| ext.to_str())
+        .map(|ext| TEXT_EXTENSIONS.contains(&ext.to_lowercase().as_str()))
+        .unwrap_or(false)
+}
+
+/// Read a text file and truncate to max_chars for prompt inclusion
+pub fn read_text_file_for_prompt(path: &Path, max_chars: usize) -> anyhow::Result<String> {
+    let bytes = std::fs::read(path)?;
+    let mut content = String::from_utf8_lossy(&bytes).into_owned();
+
+    if content.chars().count() > max_chars {
+        content = content.chars().take(max_chars).collect();
+    }
+
+    Ok(content)
+}
+
 /// Process an image from a file path
-pub fn process_image_from_path(
-    path: &Path,
-    ctx: &egui::Context,
-) -> anyhow::Result<PendingImage> {
-    let img = ImageReader::open(path)?
-        .with_guessed_format()?
-        .decode()?;
+pub fn process_image_from_path(path: &Path, ctx: &egui::Context) -> anyhow::Result<PendingImage> {
+    let img = ImageReader::open(path)?.with_guessed_format()?.decode()?;
 
     let filename = path
         .file_name()
@@ -80,8 +98,6 @@ fn process_image_internal(
 ) -> anyhow::Result<PendingImage> {
     // Resize for sending if needed
     let processed = resize_to_fit(&img, MAX_IMAGE_DIMENSION);
-    let (width, height) = (processed.width(), processed.height());
-
     // Encode as PNG for sending
     let data = encode_as_png(&processed)?;
 
@@ -93,8 +109,6 @@ fn process_image_internal(
         filename,
         thumbnail,
         data,
-        width,
-        height,
     })
 }
 
@@ -137,10 +151,7 @@ fn create_texture(ctx: &egui::Context, img: &DynamicImage, name: &str) -> egui::
 }
 
 /// Render attachment previews above the input
-pub fn render_attachments(
-    attachments: &mut Vec<PendingImage>,
-    ui: &mut egui::Ui,
-) {
+pub fn render_attachments(attachments: &mut Vec<PendingImage>, ui: &mut egui::Ui) {
     if attachments.is_empty() {
         return;
     }
@@ -189,9 +200,13 @@ pub fn render_attachments(
     // Attachment count
     let muted = crate::ui::colors::muted(ui.visuals());
     ui.label(
-        egui::RichText::new(format!("{}/{} attachments", attachments.len(), MAX_ATTACHMENTS))
-            .size(10.0)
-            .color(muted),
+        egui::RichText::new(format!(
+            "{}/{} attachments",
+            attachments.len(),
+            MAX_ATTACHMENTS
+        ))
+        .size(10.0)
+        .color(muted),
     );
 
     ui.add_space(8.0);

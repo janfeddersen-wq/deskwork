@@ -43,7 +43,11 @@ fn strip_model_prefix(model_name: &str) -> &str {
 /// let settings = Settings::default();
 /// let model = create_model("claude-code-claude-sonnet-4-20250514", "access_token", &settings);
 /// ```
-pub fn create_model(model_name: &str, access_token: &str, settings: &Settings) -> ClaudeCodeOAuthModel {
+pub fn create_model(
+    model_name: &str,
+    access_token: &str,
+    settings: &Settings,
+) -> ClaudeCodeOAuthModel {
     let actual_model_name = strip_model_prefix(model_name);
     let mut model = ClaudeCodeOAuthModel::new(actual_model_name, access_token);
 
@@ -97,7 +101,11 @@ mod tests {
     #[test]
     fn test_create_model_default_settings() {
         let settings = Settings::default();
-        let model = create_model("claude-code-claude-sonnet-4-20250514", "test-token", &settings);
+        let model = create_model(
+            "claude-code-claude-sonnet-4-20250514",
+            "test-token",
+            &settings,
+        );
         // Model name should have prefix stripped
         assert_eq!(model.name(), "claude-sonnet-4-20250514");
     }
@@ -107,7 +115,11 @@ mod tests {
         let mut settings = Settings::default();
         settings.extended_thinking = true;
         settings.thinking_budget = 10000;
-        let model = create_model("claude-code-claude-sonnet-4-20250514", "test-token", &settings);
+        let model = create_model(
+            "claude-code-claude-sonnet-4-20250514",
+            "test-token",
+            &settings,
+        );
         assert_eq!(model.name(), "claude-sonnet-4-20250514");
     }
 
