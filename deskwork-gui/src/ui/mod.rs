@@ -2,6 +2,7 @@
 
 pub mod attachments;
 pub mod chat;
+pub mod command_bar;
 pub mod input;
 pub mod markdown;
 pub mod menu;

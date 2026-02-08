@@ -7,6 +7,7 @@ use eframe::egui::{self, Color32, Key, RichText, Rounding, Vec2};
 use crate::app::DeskworkApp;
 use crate::ui::attachments;
 use crate::ui::colors;
+use crate::ui::command_bar;
 
 /// Render the input area.
 pub fn render(app: &mut DeskworkApp, ui: &mut egui::Ui) {
@@ -20,6 +21,9 @@ pub fn render(app: &mut DeskworkApp, ui: &mut egui::Ui) {
         [rect.left_top(), rect.right_top()],
         egui::Stroke::new(1.0, border),
     );
+
+    // Command bar (above the text input)
+    let command_selected = command_bar::render(app, ui);
 
     // Render attachment previews if any
     if !app.pending_attachments.is_empty() {
@@ -76,6 +80,10 @@ pub fn render(app: &mut DeskworkApp, ui: &mut egui::Ui) {
                     .max_height(max_height)
                     .show(ui, |ui| ui.add(text_edit))
                     .inner;
+
+                if command_selected {
+                    response.request_focus();
+                }
 
                 // Handle Enter to send (without shift)
                 if response.has_focus() {
@@ -208,6 +216,24 @@ pub fn render(app: &mut DeskworkApp, ui: &mut egui::Ui) {
 
             // Character count and hints
             ui.horizontal(|ui| {
+                // Command bar toggle
+                let toggle_label = if app.show_command_bar {
+                    "⚡ Commands ▾"
+                } else {
+                    "⚡ Commands ▸"
+                };
+                if ui
+                    .add(
+                        egui::Button::new(RichText::new(toggle_label).size(10.0).color(muted))
+                            .fill(Color32::TRANSPARENT)
+                            .rounding(Rounding::same(4.0)),
+                    )
+                    .clicked()
+                {
+                    app.show_command_bar = !app.show_command_bar;
+                }
+                ui.add(egui::Separator::default().vertical().spacing(4.0));
+
                 let char_count = app.input.len();
                 ui.label(
                     RichText::new(format!("{} chars", char_count))

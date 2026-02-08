@@ -213,6 +213,9 @@ pub struct DeskworkApp {
     /// Currently selected settings tab.
     pub settings_tab: crate::ui::settings::SettingsTab,
 
+    /// Whether to show the command bar above the input area.
+    pub show_command_bar: bool,
+
     /// Current working directory.
     pub working_dir: Option<std::path::PathBuf>,
 
@@ -410,6 +413,7 @@ impl DeskworkApp {
             generation_handle: None,
             show_settings: false,
             settings_tab: Default::default(),
+            show_command_bar: true,
             working_dir,
             scroll_to_bottom: false,
             status_message: None,
