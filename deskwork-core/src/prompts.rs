@@ -92,7 +92,7 @@ Your thinking process will be visible to the user, so make it clear and educatio
 pub fn build_system_prompt(
     extended_thinking: bool,
     project_context: Option<&str>,
-    plugin_context: Option<&str>,
+    category_context: Option<&str>,
     skills_context: Option<&str>,
 ) -> String {
     let mut prompt = SYSTEM_PROMPT.to_string();
@@ -106,9 +106,9 @@ pub fn build_system_prompt(
         prompt.push_str(context);
     }
 
-    if let Some(context) = plugin_context {
+    if let Some(context) = category_context {
         if !context.trim().is_empty() {
-            prompt.push_str("\n\n## Plugin Context\n\n");
+            prompt.push_str("\n\n");
             prompt.push_str(context);
         }
     }
@@ -166,13 +166,13 @@ mod tests {
         let prompt = build_system_prompt(
             true,
             Some("Full stack web app"),
-            Some("Plugins enabled"),
+            Some("## Skill Categories\n\nCategories enabled"),
             None,
         );
         assert!(prompt.contains("Deskwork"));
         assert!(prompt.contains("Extended Thinking"));
         assert!(prompt.contains("Full stack web app"));
-        assert!(prompt.contains("Plugin Context"));
-        assert!(prompt.contains("Plugins enabled"));
+        assert!(prompt.contains("Skill Categories"));
+        assert!(prompt.contains("Categories enabled"));
     }
 }

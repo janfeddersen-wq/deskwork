@@ -1,7 +1,5 @@
 //! Settings dialog.
 
-use std::collections::HashSet;
-
 use eframe::egui::{self, RichText, Rounding, Vec2};
 
 use crate::app::{AuthState, DeskworkApp};
@@ -14,9 +12,8 @@ pub enum SettingsTab {
     #[default]
     General,
     Appearance,
-    Plugins,
+    Skills, // was "Plugins" — now shows skill categories + python tools
     Tools,
-    Skills,
 }
 
 /// Render the settings dialog.
@@ -39,9 +36,8 @@ pub fn render(app: &mut DeskworkApp, ctx: &egui::Context) {
                 for (tab, label) in [
                     (SettingsTab::General, "  General  "),
                     (SettingsTab::Appearance, "  Appearance  "),
-                    (SettingsTab::Plugins, "  Plugins  "),
+                    (SettingsTab::Skills, "  Skills  "),
                     (SettingsTab::Tools, "  Tools  "),
-                    (SettingsTab::Skills, " Skills "),
                 ] {
                     let selected = app.settings_tab == tab;
                     let response = ui.selectable_label(selected, RichText::new(label).size(14.0));
@@ -61,9 +57,8 @@ pub fn render(app: &mut DeskworkApp, ctx: &egui::Context) {
                 .show(ui, |ui| match app.settings_tab {
                     SettingsTab::General => render_general_tab(app, ui, muted),
                     SettingsTab::Appearance => render_appearance_tab(app, ui, ctx, muted),
-                    SettingsTab::Plugins => render_plugins_tab(app, ui, muted),
-                    SettingsTab::Tools => render_tools_tab(app, ui, muted),
                     SettingsTab::Skills => render_skills_tab(app, ui, muted),
+                    SettingsTab::Tools => render_tools_tab(app, ui, muted),
                 });
 
             // -----------------------------------------------------------------
@@ -541,7 +536,100 @@ fn render_tools_tab(app: &mut DeskworkApp, ui: &mut egui::Ui, muted: egui::Color
 }
 
 fn render_skills_tab(app: &mut DeskworkApp, ui: &mut egui::Ui, muted: egui::Color32) {
-    ui.heading("Skills");
+    // =========================================================================
+    // Section 1: Skill Categories (knowledge-work categories with enable/disable)
+    // =========================================================================
+    ui.heading("Skill Categories");
+    ui.separator();
+
+    ui.label(
+        RichText::new(
+            "Knowledge categories that extend the assistant with domain-specific skills and commands. \
+             Enable the categories relevant to your work.",
+        )
+        .size(11.0)
+        .color(muted),
+    );
+
+    ui.add_space(8.0);
+
+    // Reload button
+    if ui
+        .add(egui::Button::new("Reload Categories").rounding(Rounding::same(8.0)))
+        .clicked()
+    {
+        app.reload_categories();
+    }
+
+    ui.add_space(8.0);
+
+    // Category list with enable/disable toggles
+    let categories = app
+        .category_registry
+        .all_categories()
+        .into_iter()
+        .cloned()
+        .collect::<Vec<_>>();
+
+    if categories.is_empty() {
+        ui.label(
+            RichText::new("No skill categories found.")
+                .size(12.0)
+                .color(muted),
+        );
+    } else {
+        for category in categories {
+            let mut enabled = app
+                .settings
+                .plugins_enabled
+                .iter()
+                .any(|id| id == &category.id);
+
+            egui::Frame::group(ui.style())
+                .inner_margin(egui::Margin::same(8.0))
+                .show(ui, |ui| {
+                    ui.horizontal(|ui| {
+                        if ui.checkbox(&mut enabled, "").changed() {
+                            app.set_category_enabled(&category.id, enabled);
+                        }
+
+                        ui.vertical(|ui| {
+                            ui.label(
+                                RichText::new(format!("{} ({})", category.name, category.id))
+                                    .strong(),
+                            );
+                            ui.label(
+                                RichText::new(format!(
+                                    "Status: {:?} | Commands: {} | Skills: {} | Connectors: {}",
+                                    category.status,
+                                    category.commands.len(),
+                                    category.skills.len(),
+                                    category.mcp_servers.len(),
+                                ))
+                                .size(11.0)
+                                .color(muted),
+                            );
+                            if !category.description.is_empty() {
+                                ui.label(
+                                    RichText::new(&category.description)
+                                        .size(11.0)
+                                        .color(muted),
+                                );
+                            }
+                        });
+                    });
+
+                });
+
+            ui.add_space(4.0);
+        }
+    }
+
+    // =========================================================================
+    // Section 2: Python Tools (skill scripts from skills.zip bundle)
+    // =========================================================================
+    ui.add_space(16.0);
+    ui.heading("Python Tools");
     ui.separator();
 
     ui.label(
@@ -555,7 +643,7 @@ fn render_skills_tab(app: &mut DeskworkApp, ui: &mut egui::Ui, muted: egui::Colo
 
     ui.add_space(8.0);
 
-    // Use cached skills from app.skills_context — NOT discover_skills() which does disk I/O
+    // Use cached skills from app.skills_context
     let skills: Vec<deskwork_core::SkillMetadata> = app
         .skills_context
         .as_ref()
@@ -565,15 +653,14 @@ fn render_skills_tab(app: &mut DeskworkApp, ui: &mut egui::Ui, muted: egui::Colo
     if skills.is_empty() {
         ui.label(
             RichText::new(
-                "No skills found. Skills will be available after the bundle is extracted.",
+                "No Python tools found. Tools will be available after the bundle is extracted.",
             )
             .size(12.0)
             .color(muted),
         );
-        // Don't return early — still show venv info below
     } else {
         ui.label(
-            RichText::new(format!("{} skill(s) available", skills.len()))
+            RichText::new(format!("{} Python tool(s) available", skills.len()))
                 .size(12.0)
                 .strong(),
         );
@@ -643,251 +730,6 @@ fn render_skills_tab(app: &mut DeskworkApp, ui: &mut egui::Ui, muted: egui::Colo
                     .color(muted),
                 );
             }
-        }
-    }
-}
-
-fn render_plugins_tab(app: &mut DeskworkApp, ui: &mut egui::Ui, muted: egui::Color32) {
-    // Plugins
-    ui.heading("Plugins");
-    ui.separator();
-
-    let plugin_dir = app.plugin_directory();
-    ui.label(
-        RichText::new(format!("Plugin directory: {}", plugin_dir.display()))
-            .size(11.0)
-            .color(muted),
-    );
-    ui.label(
-        RichText::new(format!(
-            "Bundled legal plugin present: {}",
-            if app.has_bundled_legal_plugin() {
-                "yes"
-            } else {
-                "no"
-            }
-        ))
-        .size(11.0)
-        .color(muted),
-    );
-
-    ui.horizontal(|ui| {
-        if ui
-            .add(egui::Button::new("Install Plugin Folder").rounding(Rounding::same(8.0)))
-            .clicked()
-        {
-            if let Some(folder) = rfd::FileDialog::new().pick_folder() {
-                app.install_plugin_from_folder(folder.as_path());
-            }
-        }
-
-        if ui
-            .add(egui::Button::new("Reload Plugins").rounding(Rounding::same(8.0)))
-            .clicked()
-        {
-            app.reload_plugins();
-        }
-    });
-
-    let git_url_input_id = egui::Id::new("settings-plugin-git-url-input");
-    let mut git_url = ui.ctx().data_mut(|data| {
-        data.get_persisted::<String>(git_url_input_id)
-            .unwrap_or_default()
-    });
-
-    ui.horizontal(|ui| {
-        ui.add_sized(
-            Vec2::new(320.0, 24.0),
-            egui::TextEdit::singleline(&mut git_url).hint_text("https://github.com/org/repo.git"),
-        );
-
-        if ui
-            .add(egui::Button::new("Install from Git URL").rounding(Rounding::same(8.0)))
-            .clicked()
-        {
-            app.install_plugin_from_git_url(&git_url);
-        }
-    });
-
-    ui.ctx()
-        .data_mut(|data| data.insert_persisted(git_url_input_id, git_url));
-
-    ui.add_space(8.0);
-
-    let connector_names: HashSet<String> = app
-        .plugin_runtime
-        .mcp_bridge_result()
-        .configs
-        .keys()
-        .map(|name| {
-            name.split_once(':')
-                .map(|(_, connector)| connector)
-                .unwrap_or(name)
-                .to_ascii_lowercase()
-        })
-        .collect();
-
-    let readiness_categories = [
-        ("chat", vec!["slack", "teams", "ms-teams"]),
-        (
-            "cloud storage",
-            vec![
-                "box",
-                "egnyte",
-                "sharepoint",
-                "onedrive",
-                "dropbox",
-                "gdrive",
-                "google-drive",
-            ],
-        ),
-        (
-            "office suite",
-            vec!["ms365", "microsoft365", "google-workspace", "workspace"],
-        ),
-        (
-            "project tracking",
-            vec!["atlassian", "jira", "confluence", "linear", "asana"],
-        ),
-        ("clm", vec!["clm", "ironclad", "agiloft"]),
-        ("crm", vec!["crm", "salesforce", "hubspot"]),
-        (
-            "e-signature",
-            vec!["esignature", "e-signature", "docusign", "adobe-sign"],
-        ),
-        ("email", vec!["outlook", "gmail", "email", "ms365"]),
-        (
-            "calendar",
-            vec!["calendar", "outlook-calendar", "gcal", "ms365"],
-        ),
-    ];
-
-    ui.group(|ui| {
-        ui.label(
-            RichText::new("Connector category readiness")
-                .strong()
-                .size(12.0),
-        );
-        ui.add_space(4.0);
-        for (category, candidates) in readiness_categories {
-            let available = candidates
-                .iter()
-                .any(|candidate| connector_names.contains(*candidate));
-            ui.horizontal(|ui| {
-                ui.label(
-                    RichText::new(format!("- {category}: "))
-                        .size(11.0)
-                        .color(muted),
-                );
-                ui.label(
-                    RichText::new(if available { "Available" } else { "Missing" })
-                        .size(11.0)
-                        .color(if available {
-                            colors::SUCCESS
-                        } else {
-                            colors::ERROR
-                        }),
-                );
-            });
-        }
-    });
-
-    ui.add_space(8.0);
-
-    let unavailable = app.plugin_runtime.mcp_bridge_result().unavailable.clone();
-    let plugins = app
-        .plugin_runtime
-        .registry()
-        .all_plugins()
-        .into_iter()
-        .cloned()
-        .collect::<Vec<_>>();
-
-    if plugins.is_empty() {
-        ui.label(
-            RichText::new("No plugins discovered.")
-                .size(12.0)
-                .color(muted),
-        );
-    } else {
-        for plugin in plugins {
-            let mut enabled = app
-                .settings
-                .plugins_enabled
-                .iter()
-                .any(|id| id == &plugin.id);
-
-            let plugin_unavailable = unavailable
-                .iter()
-                .filter(|u| u.namespaced_name.starts_with(&format!("{}:", plugin.id)))
-                .cloned()
-                .collect::<Vec<_>>();
-            let unavailable_count = plugin_unavailable.len();
-
-            egui::Frame::group(ui.style())
-                .inner_margin(egui::Margin::same(8.0))
-                .show(ui, |ui| {
-                    ui.horizontal(|ui| {
-                        if ui.checkbox(&mut enabled, "").changed() {
-                            app.set_plugin_enabled(&plugin.id, enabled);
-                        }
-
-                        ui.vertical(|ui| {
-                            ui.label(
-                                RichText::new(format!(
-                                    "{} ({}) v{}",
-                                    plugin.name, plugin.id, plugin.version
-                                ))
-                                .strong(),
-                            );
-                            ui.label(
-                                RichText::new(format!(
-                                    "Status: {:?} | Commands: {} | Skills: {} | Connectors: {} | Unavailable connectors: {}",
-                                    plugin.status,
-                                    plugin.commands.len(),
-                                    plugin.skills.len(),
-                                    plugin.mcp_servers.len(),
-                                    unavailable_count,
-                                ))
-                                .size(11.0)
-                                .color(muted),
-                            );
-                            ui.label(
-                                RichText::new(plugin.description.clone())
-                                    .size(11.0)
-                                    .color(muted),
-                            );
-                        });
-
-                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            if ui
-                                .add(
-                                    egui::Button::new("Configure")
-                                        .rounding(Rounding::same(8.0)),
-                                )
-                                .clicked()
-                            {
-                                app.open_plugin_local_config(&plugin.id);
-                            }
-                        });
-                    });
-
-                    if !plugin_unavailable.is_empty() {
-                        ui.add_space(4.0);
-                        for item in &plugin_unavailable {
-                            ui.label(
-                                RichText::new(format!(
-                                    "Unavailable `{}`: {}",
-                                    item.namespaced_name, item.reason
-                                ))
-                                .size(11.0)
-                                .color(colors::ERROR),
-                            );
-                        }
-                    }
-                });
-
-            ui.add_space(4.0);
         }
     }
 }

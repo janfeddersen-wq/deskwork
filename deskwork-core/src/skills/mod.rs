@@ -11,8 +11,12 @@
 //! Each skill lives in its own subdirectory under `{temp}/deskwork/skills/` and
 //! contains a `SKILL.md` file with YAML frontmatter describing the skill.
 
+pub mod categories;
+pub mod category_context;
+pub mod commands;
 pub mod context;
 pub mod discovery;
+pub mod types;
 
 pub use context::SkillsContext;
 pub use discovery::{discover_skills, parse_skill_frontmatter, SkillMetadata};

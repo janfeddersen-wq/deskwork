@@ -1,11 +1,15 @@
+//! Slash command parsing, suggestions, and prompt building.
+//!
+//! Commands use the format `/{category_id}:{command_name}` (e.g., `/legal:review-contract`).
+
 use std::collections::HashMap;
 
-use crate::plugins::registry::PluginRegistry;
-use crate::plugins::types::CommandFile;
+use crate::skills::types::CommandFile; // reuse existing type for now
+use crate::skills::categories::SkillCategoryRegistry;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ParsedSlashCommand {
-    pub plugin_id: String,
+    pub category_id: String,
     pub command_name: String,
     pub slash_command: String,
     pub raw_args: Option<String>,
@@ -14,11 +18,16 @@ pub struct ParsedSlashCommand {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SlashCommandSuggestion {
     pub slash_command: String,
-    pub plugin_id: String,
+    pub category_id: String,
     pub command_name: String,
     pub description: String,
 }
 
+/// Parse a slash command from user input.
+///
+/// Expected format: `/{category_id}:{command_name} [optional args]`
+///
+/// Returns `None` if input doesn't match the format.
 pub fn parse_slash_command(input: &str) -> Option<ParsedSlashCommand> {
     let trimmed = input.trim();
     if !trimmed.starts_with('/') {
@@ -31,29 +40,31 @@ pub fn parse_slash_command(input: &str) -> Option<ParsedSlashCommand> {
     };
 
     let body = &cmd_part[1..];
-    let (plugin_id, command_name) = body.split_once(':')?;
+    let (category_id, command_name) = body.split_once(':')?;
 
-    if plugin_id.is_empty() || command_name.is_empty() {
+    if category_id.is_empty() || command_name.is_empty() {
         return None;
     }
 
     Some(ParsedSlashCommand {
-        plugin_id: plugin_id.to_string(),
+        category_id: category_id.to_string(),
         command_name: command_name.to_string(),
-        slash_command: format!("/{plugin_id}:{command_name}"),
+        slash_command: format!("/{category_id}:{command_name}"),
         raw_args: arg_part.filter(|s| !s.is_empty()),
     })
 }
 
-pub fn command_suggestions(registry: &PluginRegistry, prefix: &str) -> Vec<String> {
+/// Get command suggestions matching a prefix, using the category registry.
+pub fn command_suggestions(registry: &SkillCategoryRegistry, prefix: &str) -> Vec<String> {
     command_suggestions_rich(registry, prefix)
         .into_iter()
         .map(|s| s.slash_command)
         .collect()
 }
 
+/// Get rich command suggestions with descriptions, using the category registry.
 pub fn command_suggestions_rich(
-    registry: &PluginRegistry,
+    registry: &SkillCategoryRegistry,
     prefix: &str,
 ) -> Vec<SlashCommandSuggestion> {
     let normalized = prefix.trim().to_ascii_lowercase();
@@ -79,7 +90,7 @@ pub fn command_suggestions_rich(
                 score,
                 SlashCommandSuggestion {
                     slash_command: command.slash_command.clone(),
-                    plugin_id: command.plugin_id.clone(),
+                    category_id: command.plugin_id.clone(), // plugin_id holds category_id
                     command_name: command.name.clone(),
                     description: command.description.clone(),
                 },
@@ -90,7 +101,7 @@ pub fn command_suggestions_rich(
     ranked.sort_by(|(score_a, a), (score_b, b)| {
         score_a
             .cmp(score_b)
-            .then_with(|| a.plugin_id.cmp(&b.plugin_id))
+            .then_with(|| a.category_id.cmp(&b.category_id))
             .then_with(|| a.command_name.cmp(&b.command_name))
     });
 
@@ -100,6 +111,7 @@ pub fn command_suggestions_rich(
         .collect()
 }
 
+/// Build the full prompt that gets sent to the model when a slash command is invoked.
 pub fn build_command_prompt(
     command: &CommandFile,
     user_inputs: &HashMap<String, String>,
@@ -136,4 +148,15 @@ pub fn build_command_prompt(
     prompt.push('\n');
 
     prompt
+}
+
+/// Get the command handler for a specific slash command string from the category registry.
+pub fn get_command_handler<'a>(
+    registry: &'a SkillCategoryRegistry,
+    slash_command: &str,
+) -> Option<&'a CommandFile> {
+    registry
+        .all_slash_commands()
+        .into_iter()
+        .find(|command| command.slash_command == slash_command)
 }

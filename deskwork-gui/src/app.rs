@@ -5,16 +5,19 @@ use tokio::runtime::Runtime;
 use tracing::{debug, error, info, warn};
 
 use std::collections::HashMap;
-use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use deskwork_core::{
-    build_system_prompt, event_channel, run_agent, ClaudeCodeAuth, Database, EventReceiver,
-    ExecutorEvent, ImageData, ImageMediaType, PluginRuntime, RunAgentArgs, Settings,
+    build_system_prompt, event_channel, run_agent, ClaudeCodeAuth, Database, DocumentData,
+    DocumentMediaType, EventReceiver, ExecutorEvent, ImageData, ImageMediaType, ModelRequest,
+    RunAgentArgs, Settings,
 };
+use deskwork_core::skills::categories::{build_mcp_map, McpBridgeResult, SkillCategoryRegistry};
+use deskwork_core::skills::category_context::{build_category_context, ContextBudget};
+use deskwork_core::skills::commands::{self as skill_commands};
 
 use crate::ui;
-use crate::ui::attachments::{self, PendingImage};
+use crate::ui::attachments::{self, PendingDocument, PendingImage};
 
 // =============================================================================
 // Message Types
@@ -148,8 +151,11 @@ pub struct DeskworkApp {
     /// User settings.
     pub settings: Settings,
 
-    /// Plugin runtime and registry state.
-    pub plugin_runtime: PluginRuntime,
+    /// Skill category registry (replaces plugin_runtime).
+    pub category_registry: SkillCategoryRegistry,
+
+    /// Cached MCP bridge result for skill categories.
+    pub category_mcp: McpBridgeResult,
 
     /// Skills context for system prompt injection.
     pub skills_context: Option<deskwork_core::SkillsContext>,
@@ -169,8 +175,13 @@ pub struct DeskworkApp {
     // -------------------------------------------------------------------------
     // Chat State
     // -------------------------------------------------------------------------
-    /// Message history.
+    /// Message history (UI display).
     pub messages: Vec<Message>,
+
+    /// API-level message history for conversation continuity.
+    /// Stored as-is from the agent framework to preserve exact types,
+    /// thinking signatures, and tool call IDs.
+    pub api_history: Vec<ModelRequest>,
 
     /// Current input text.
     pub input: String,
@@ -247,24 +258,12 @@ pub struct DeskworkApp {
 
     /// Pending image attachments.
     pub pending_attachments: Vec<PendingImage>,
+
+    /// Pending document attachments (PDFs).
+    pub pending_documents: Vec<PendingDocument>,
 }
 
-fn default_plugins_dir() -> PathBuf {
-    if let Some(home) = std::env::var_os("HOME") {
-        return PathBuf::from(home).join(".deskwork").join("plugins");
-    }
 
-    PathBuf::from(".deskwork/plugins")
-}
-
-fn resolve_plugins_dir(settings: &Settings) -> PathBuf {
-    settings
-        .plugins_dir
-        .as_ref()
-        .filter(|p| !p.trim().is_empty())
-        .map(PathBuf::from)
-        .unwrap_or_else(default_plugins_dir)
-}
 
 fn parse_inline_command_inputs(input: &str) -> HashMap<String, String> {
     let Some((_, args)) = input.trim().split_once(' ') else {
@@ -278,30 +277,6 @@ fn parse_inline_command_inputs(input: &str) -> HashMap<String, String> {
         .collect()
 }
 
-fn copy_dir_all(src: &Path, dst: &Path) -> std::io::Result<()> {
-    if !src.is_dir() {
-        return Err(std::io::Error::new(
-            std::io::ErrorKind::InvalidInput,
-            format!("Source is not a directory: {}", src.display()),
-        ));
-    }
-
-    fs::create_dir_all(dst)?;
-
-    for entry in fs::read_dir(src)? {
-        let entry = entry?;
-        let file_type = entry.file_type()?;
-        let target_path = dst.join(entry.file_name());
-
-        if file_type.is_dir() {
-            copy_dir_all(&entry.path(), &target_path)?;
-        } else if file_type.is_file() {
-            fs::copy(entry.path(), target_path)?;
-        }
-    }
-
-    Ok(())
-}
 
 impl DeskworkApp {
     /// Create a new application instance.
@@ -342,11 +317,9 @@ impl DeskworkApp {
         // Build skills context (best-effort, don't block on failures)
         let skills_context = Some(deskwork_core::SkillsContext::build());
 
-        // Initialize plugin runtime
-        let plugins_dir = resolve_plugins_dir(&settings);
-        let mut plugin_runtime = PluginRuntime::new(&plugins_dir, &settings.plugins_enabled);
-        plugin_runtime.set_context_budget(settings.plugin_context_token_budget as usize);
-        plugin_runtime.load();
+        // Initialize skill category registry
+        let category_registry = SkillCategoryRegistry::load(&settings.plugins_enabled);
+        let category_mcp = build_mcp_map(&category_registry.enabled_categories());
 
         // Restore working directory from settings
         let working_dir = settings.working_directory.as_ref().map(PathBuf::from);
@@ -371,7 +344,48 @@ impl DeskworkApp {
         };
         cc.egui_ctx.set_visuals(visuals);
 
-        // Configure fonts for better readability
+        // Configure custom fonts for comprehensive Unicode support.
+        // egui's default fonts (Ubuntu-Light, Hack) have limited Unicode coverage,
+        // causing rendering issues with characters LLMs commonly produce (em dashes,
+        // curly quotes, arrows, math symbols, emoji, etc.).
+        let mut fonts = egui::FontDefinitions::default();
+
+        // -- Insert font data --
+        fonts.font_data.insert(
+            "Inter".to_owned(),
+            egui::FontData::from_static(include_bytes!("../fonts/Inter-Regular.ttf")),
+        );
+        fonts.font_data.insert(
+            "JetBrainsMono".to_owned(),
+            egui::FontData::from_static(include_bytes!("../fonts/JetBrainsMono-Regular.ttf")),
+        );
+        fonts.font_data.insert(
+            "NotoSansSymbols2".to_owned(),
+            egui::FontData::from_static(include_bytes!("../fonts/NotoSansSymbols2-Regular.ttf")),
+        );
+        fonts.font_data.insert(
+            "NotoEmoji".to_owned(),
+            egui::FontData::from_static(include_bytes!("../fonts/NotoEmoji-Regular.ttf")),
+        );
+
+        // -- Configure proportional font family (body text, headings, UI) --
+        // Insert our fonts at the front so they take priority over egui defaults.
+        if let Some(family) = fonts.families.get_mut(&egui::FontFamily::Proportional) {
+            family.insert(0, "NotoEmoji".to_owned());
+            family.insert(0, "NotoSansSymbols2".to_owned());
+            family.insert(0, "Inter".to_owned());
+        }
+
+        // -- Configure monospace font family (code blocks, inline code) --
+        if let Some(family) = fonts.families.get_mut(&egui::FontFamily::Monospace) {
+            family.insert(0, "NotoEmoji".to_owned());
+            family.insert(0, "NotoSansSymbols2".to_owned());
+            family.insert(0, "JetBrainsMono".to_owned());
+        }
+
+        cc.egui_ctx.set_fonts(fonts);
+
+        // Configure spacing for better readability
         let mut style = (*cc.egui_ctx.style()).clone();
         style.spacing.item_spacing = egui::vec2(8.0, 6.0);
         cc.egui_ctx.set_style(style);
@@ -380,12 +394,14 @@ impl DeskworkApp {
             runtime,
             db,
             settings,
-            plugin_runtime,
+            category_registry,
+            category_mcp,
             skills_context,
             auth_state,
             available_models,
             fetching_models: false,
             messages: Vec::new(),
+            api_history: vec![],
             input: String::new(),
             is_generating: false,
             current_blocks: Vec::new(),
@@ -406,6 +422,7 @@ impl DeskworkApp {
             tool_install_result_rx: Vec::new(),
             tool_uninstall_result_rx: Vec::new(),
             pending_attachments: Vec::new(),
+            pending_documents: Vec::new(),
         }
     }
 
@@ -610,23 +627,27 @@ impl DeskworkApp {
             }
         };
 
-        // Refresh plugin runtime so external local config edits are reflected immediately.
-        self.plugin_runtime.reload();
-
         // Resolve slash commands into full command prompts.
         let mut agent_input = raw_input.clone();
         if raw_input.starts_with('/') {
             let user_inputs = parse_inline_command_inputs(&raw_input);
-            match self
-                .plugin_runtime
-                .execute_command(&raw_input, &user_inputs)
-            {
-                Ok(prompt) => {
-                    agent_input = prompt;
-                }
-                Err(err) => {
-                    self.set_status(&format!("Slash command error: {err}"));
-                    return;
+            if let Some(parsed) = skill_commands::parse_slash_command(&raw_input) {
+                match skill_commands::get_command_handler(&self.category_registry, &parsed.slash_command)
+                {
+                    Some(command) => {
+                        agent_input = skill_commands::build_command_prompt(
+                            command,
+                            &user_inputs,
+                            parsed.raw_args.as_deref(),
+                        );
+                    }
+                    None => {
+                        self.set_status(&format!(
+                            "No enabled command handler found for {}",
+                            parsed.slash_command
+                        ));
+                        return;
+                    }
                 }
             }
         }
@@ -650,9 +671,11 @@ impl DeskworkApp {
         let (tx, rx) = event_channel();
         self.event_rx = Some(rx);
 
-        self.plugin_runtime
-            .set_context_budget(self.settings.plugin_context_token_budget as usize);
-        let plugin_context = self.plugin_runtime.plugin_context();
+        let budget = ContextBudget {
+            max_tokens: self.settings.plugin_context_token_budget as usize,
+        };
+        let category_context =
+            build_category_context(&self.category_registry, &self.category_mcp, budget);
 
         let skills_prompt = self
             .skills_context
@@ -663,7 +686,7 @@ impl DeskworkApp {
         let system_prompt = build_system_prompt(
             self.settings.extended_thinking,
             None,
-            Some(plugin_context.prompt.as_str()),
+            Some(category_context.prompt.as_str()),
             skills_prompt.as_deref(),
         );
 
@@ -677,10 +700,22 @@ impl DeskworkApp {
             })
             .collect();
 
+        // Convert pending documents to DocumentData
+        let documents: Vec<DocumentData> = self
+            .pending_documents
+            .iter()
+            .map(|doc| DocumentData {
+                data: doc.data.clone(),
+                media_type: DocumentMediaType::Pdf,
+                filename: Some(doc.filename.clone()),
+            })
+            .collect();
+
         // Spawn the agent
         let settings = self.settings.clone();
         let model_name = settings.model.clone();
-        let plugin_mcp_configs = self.plugin_runtime.mcp_bridge_result().configs.clone();
+        let plugin_mcp_configs = self.category_mcp.configs.clone();
+        let api_history = self.api_history.clone();
         let handle = self.runtime.spawn(async move {
             let agent_handle = run_agent(RunAgentArgs {
                 access_token,
@@ -689,7 +724,8 @@ impl DeskworkApp {
                 system_prompt,
                 user_input: agent_input,
                 images,
-                message_history: vec![], // TODO: Include message history
+                documents,
+                message_history: api_history,
                 plugin_mcp_configs,
                 event_sender: tx,
             });
@@ -700,6 +736,7 @@ impl DeskworkApp {
 
         // Clear attachments after sending
         self.pending_attachments.clear();
+        self.pending_documents.clear();
 
         self.generation_handle = Some(handle);
     }
@@ -801,8 +838,10 @@ impl DeskworkApp {
                     ExecutorEvent::Done {
                         input_tokens,
                         output_tokens,
+                        message_history,
                     } => {
                         info!(input_tokens, output_tokens, "Generation complete");
+                        self.api_history = message_history;
                         self.finalize_response();
                         self.is_generating = false;
                         self.event_rx = None;
@@ -870,289 +909,43 @@ impl DeskworkApp {
         }
     }
 
-    /// Reload plugins from bundled and local directories.
-    pub fn reload_plugins(&mut self) {
-        self.plugin_runtime.reload();
-        self.set_status("Plugins reloaded");
+    /// Reload skill categories from bundled assets.
+    pub fn reload_categories(&mut self) {
+        self.category_registry = SkillCategoryRegistry::load(&self.settings.plugins_enabled);
+        self.category_mcp = build_mcp_map(&self.category_registry.enabled_categories());
+        self.set_status("Skill categories reloaded");
     }
 
-    /// Open a plugin's local config markdown in the default system editor.
-    pub fn open_plugin_local_config(&mut self, plugin_id: &str) {
-        let plugin = self
-            .plugin_runtime
-            .registry()
-            .all_plugins()
-            .iter()
-            .find(|p| p.id == plugin_id)
-            .cloned();
 
-        let Some(plugin) = plugin else {
-            self.set_status(&format!("Plugin `{plugin_id}` not found"));
-            return;
-        };
 
-        let plugin_dir = self.plugin_directory().join(plugin_id);
-        let local_config_path = plugin_dir.join(format!("{plugin_id}.local.md"));
 
-        if !local_config_path.exists() {
-            if let Err(err) = fs::create_dir_all(&plugin_dir) {
-                self.set_status(&format!(
-                    "Failed to create plugin directory for `{plugin_id}`: {err}"
-                ));
-                return;
-            }
-
-            let default_content = plugin.local_config.clone().unwrap_or_else(|| {
-                format!("# {plugin_id}.local.md\n\n<!-- Local plugin configuration -->\n")
-            });
-
-            if let Err(err) = fs::write(&local_config_path, default_content) {
-                self.set_status(&format!(
-                    "Failed to create local config for `{plugin_id}`: {err}"
-                ));
-                return;
-            }
-        }
-
-        let open_result = if cfg!(target_os = "macos") {
-            std::process::Command::new("open")
-                .arg(&local_config_path)
-                .status()
-        } else if cfg!(target_os = "windows") {
-            std::process::Command::new("cmd")
-                .args(["/C", "start", ""])
-                .arg(&local_config_path)
-                .status()
-        } else {
-            std::process::Command::new("xdg-open")
-                .arg(&local_config_path)
-                .status()
-        };
-
-        match open_result {
-            Ok(status) if status.success() => {
-                self.set_status(&format!("Opened local config for `{plugin_id}`"));
-            }
-            Ok(status) => {
-                self.set_status(&format!(
-                    "Failed to open local config for `{plugin_id}` (exit code: {:?})",
-                    status.code()
-                ));
-            }
-            Err(err) => {
-                self.set_status(&format!("Failed to launch editor for `{plugin_id}`: {err}"));
-            }
-        }
-    }
-
-    /// Install (or replace) plugin folders from a git repository URL.
-    pub fn install_plugin_from_git_url(&mut self, git_url: &str) {
-        let url = git_url.trim();
-        if url.is_empty() {
-            self.set_status("Git URL is empty");
-            return;
-        }
-
-        let temp_clone_dir = std::env::temp_dir().join(format!(
-            "deskwork-plugin-clone-{}-{}",
-            chrono::Utc::now().timestamp_millis(),
-            std::process::id()
-        ));
-
-        let install_result: Result<Vec<String>, String> = (|| {
-            let clone_status = std::process::Command::new("git")
-                .arg("clone")
-                .arg("--depth")
-                .arg("1")
-                .arg(url)
-                .arg(&temp_clone_dir)
-                .status()
-                .map_err(|err| format!("Failed to run git clone: {err}"))?;
-
-            if !clone_status.success() {
-                return Err(format!(
-                    "git clone failed for `{url}` (exit code: {:?})",
-                    clone_status.code()
-                ));
-            }
-
-            let plugin_dirs = fs::read_dir(&temp_clone_dir)
-                .map_err(|err| format!("Failed to inspect cloned repository: {err}"))?
-                .filter_map(Result::ok)
-                .filter_map(|entry| {
-                    let is_dir = entry.file_type().ok()?.is_dir();
-                    if !is_dir {
-                        return None;
-                    }
-
-                    let plugin_manifest = entry.path().join(".claude-plugin").join("plugin.json");
-                    if plugin_manifest.is_file() {
-                        Some(entry.path())
-                    } else {
-                        None
-                    }
-                })
-                .collect::<Vec<_>>();
-
-            if plugin_dirs.is_empty() {
-                return Err(
-                    "No plugin folders found. Expected child directories containing `.claude-plugin/plugin.json`".to_string(),
-                );
-            }
-
-            let plugins_dir = self.plugin_directory();
-            fs::create_dir_all(&plugins_dir)
-                .map_err(|err| format!("Failed to create plugins directory: {err}"))?;
-
-            let mut installed = Vec::new();
-            let mut failures = Vec::new();
-
-            for plugin_dir in plugin_dirs {
-                let Some(folder_name) = plugin_dir.file_name().and_then(|name| name.to_str())
-                else {
-                    failures.push(format!(
-                        "Skipped plugin folder with invalid UTF-8 name: {}",
-                        plugin_dir.display()
-                    ));
-                    continue;
-                };
-
-                let target_dir = plugins_dir.join(folder_name);
-
-                if target_dir.exists() {
-                    if let Err(err) = fs::remove_dir_all(&target_dir) {
-                        failures.push(format!(
-                            "Failed replacing existing plugin `{folder_name}`: {err}"
-                        ));
-                        continue;
-                    }
-                }
-
-                if let Err(err) = copy_dir_all(&plugin_dir, &target_dir) {
-                    failures.push(format!("Failed installing plugin `{folder_name}`: {err}"));
-                    continue;
-                }
-
-                installed.push(folder_name.to_string());
-            }
-
-            if installed.is_empty() {
-                if failures.is_empty() {
-                    Err("No plugin folders were installed".to_string())
-                } else {
-                    Err(failures.join(" | "))
-                }
-            } else {
-                if !failures.is_empty() {
-                    warn!(
-                        "Some plugin folders failed to install from git URL: {}",
-                        failures.join(" | ")
-                    );
-                }
-                Ok(installed)
-            }
-        })();
-
-        if let Err(err) = fs::remove_dir_all(&temp_clone_dir) {
-            warn!(
-                "Failed to clean up temporary plugin clone directory {}: {}",
-                temp_clone_dir.display(),
-                err
-            );
-        }
-
-        match install_result {
-            Ok(installed_ids) => {
-                self.reload_plugins();
-                self.set_status(&format!(
-                    "Installed plugin(s) from git: {}",
-                    installed_ids.join(", ")
-                ));
-            }
-            Err(err) => {
-                self.set_status(&format!("Failed to install plugin(s) from git: {err}"));
-            }
-        }
-    }
-
-    /// Install (or replace) a plugin by copying a local folder into plugins dir.
-    pub fn install_plugin_from_folder(&mut self, source_folder: &Path) {
-        if !source_folder.is_dir() {
-            self.set_status("Selected plugin source is not a folder");
-            return;
-        }
-
-        let Some(folder_name) = source_folder.file_name() else {
-            self.set_status("Selected plugin folder has no valid name");
-            return;
-        };
-
-        let plugins_dir = self.plugin_directory();
-        if let Err(err) = fs::create_dir_all(&plugins_dir) {
-            self.set_status(&format!("Failed to create plugins directory: {err}"));
-            return;
-        }
-
-        let target_dir = plugins_dir.join(folder_name);
-        if target_dir.exists() {
-            if let Err(err) = fs::remove_dir_all(&target_dir) {
-                self.set_status(&format!(
-                    "Failed to replace existing plugin `{}`: {err}",
-                    target_dir.display()
-                ));
-                return;
-            }
-        }
-
-        if let Err(err) = copy_dir_all(source_folder, &target_dir) {
-            self.set_status(&format!("Failed to install plugin folder: {err}"));
-            return;
-        }
-
-        self.reload_plugins();
-        self.set_status(&format!(
-            "Installed plugin folder `{}`",
-            folder_name.to_string_lossy()
-        ));
-    }
-
-    /// Enable or disable a plugin and persist the enabled set.
-    pub fn set_plugin_enabled(&mut self, plugin_id: &str, enabled: bool) {
-        self.plugin_runtime.toggle_plugin(plugin_id, enabled);
-
+    pub fn set_category_enabled(&mut self, category_id: &str, enabled: bool) {
         if enabled {
+            self.category_registry.enable(category_id);
             if !self
                 .settings
                 .plugins_enabled
                 .iter()
-                .any(|id| id == plugin_id)
+                .any(|id| id == category_id)
             {
-                self.settings.plugins_enabled.push(plugin_id.to_string());
+                self.settings.plugins_enabled.push(category_id.to_string());
             }
         } else {
-            self.settings.plugins_enabled.retain(|id| id != plugin_id);
+            self.category_registry.disable(category_id);
+            self.settings.plugins_enabled.retain(|id| id != category_id);
         }
 
+        // Rebuild MCP map after category change
+        self.category_mcp = build_mcp_map(&self.category_registry.enabled_categories());
         self.save_settings();
     }
 
-    /// Get the effective plugin directory path.
-    pub fn plugin_directory(&self) -> PathBuf {
-        resolve_plugins_dir(&self.settings)
-    }
 
-    /// Check whether a bundled legal plugin is currently available.
-    pub fn has_bundled_legal_plugin(&self) -> bool {
-        self.plugin_runtime
-            .registry()
-            .all_plugins()
-            .iter()
-            .any(|p| p.id == "legal" && p.path.to_string_lossy().starts_with("bundled/"))
-    }
 
     /// Clear the chat history.
     pub fn clear_chat(&mut self) {
         self.messages.clear();
+        self.api_history.clear();
         self.current_blocks.clear();
         self.streaming_block_kind = StreamingBlockKind::None;
     }
@@ -1505,6 +1298,25 @@ impl DeskworkApp {
                             self.set_status(&format!("Failed to load image: {}", e));
                         }
                     }
+                } else if attachments::is_pdf_file(path) {
+                    if self.pending_documents.len() >= attachments::MAX_ATTACHMENTS {
+                        self.set_status(&format!(
+                            "Maximum {} attachments reached",
+                            attachments::MAX_ATTACHMENTS
+                        ));
+                        break;
+                    }
+
+                    match attachments::process_pdf_from_path(path) {
+                        Ok(doc) => {
+                            info!("Added PDF attachment: {}", doc.filename);
+                            self.pending_documents.push(doc);
+                        }
+                        Err(e) => {
+                            warn!("Failed to process PDF {:?}: {}", path, e);
+                            self.set_status(&format!("Failed to load PDF: {}", e));
+                        }
+                    }
                 } else if attachments::is_text_file(path) {
                     match attachments::read_text_file_for_prompt(path, 20_000) {
                         Ok(content) => {
@@ -1527,20 +1339,78 @@ impl DeskworkApp {
                             self.set_status(&format!("Failed to read text file: {}", e));
                         }
                     }
-                } else {
-                    let ext = path
-                        .extension()
-                        .and_then(|e| e.to_str())
-                        .map(|e| e.to_ascii_lowercase());
+                } else if attachments::is_office_file(path) {
+                    // Office documents: copy to working directory and add prompt
+                    if let Some(ref work_dir) = self.working_dir {
+                        let filename = path
+                            .file_name()
+                            .map(|n| n.to_string_lossy().into_owned())
+                            .unwrap_or_else(|| "document".to_string());
 
-                    match ext.as_deref() {
-                        Some("pdf") | Some("doc") | Some("docx") => {
-                            self.set_status(
-                                "Document parsing for pdf/doc/docx is not available yet. Paste extracted text, or provide URL/path for tools.",
-                            );
+                        let dest = {
+                            let initial = work_dir.join(&filename);
+                            if !initial.exists() {
+                                initial
+                            } else {
+                                // Find a unique name: file (1).docx, file (2).docx, ...
+                                let stem = std::path::Path::new(&filename)
+                                    .file_stem()
+                                    .and_then(|s| s.to_str())
+                                    .unwrap_or(filename.as_str());
+                                let ext = std::path::Path::new(&filename)
+                                    .extension()
+                                    .and_then(|e| e.to_str())
+                                    .unwrap_or("");
+                                let mut counter = 1u32;
+                                loop {
+                                    let candidate = if ext.is_empty() {
+                                        work_dir.join(format!("{stem} ({counter})"))
+                                    } else {
+                                        work_dir.join(format!("{stem} ({counter}).{ext}"))
+                                    };
+                                    if !candidate.exists() {
+                                        break candidate;
+                                    }
+                                    counter += 1;
+                                    if counter > 100 {
+                                        // Safety valve
+                                        break candidate;
+                                    }
+                                }
+                            }
+                        };
+
+                        match std::fs::copy(path, &dest) {
+                            Ok(_) => {
+                                let dest_filename = dest
+                                    .file_name()
+                                    .and_then(|n| n.to_str())
+                                    .unwrap_or(filename.as_str());
+                                info!("Copied Office file to working dir: {}", dest.display());
+
+                                if !self.input.is_empty() {
+                                    self.input.push_str("\n\n");
+                                }
+                                let safe_name = dest_filename.replace(['\r', '\n'], " ");
+                                self.input
+                                    .push_str(&format!("Please look at `./{safe_name}`"));
+                                self.set_status(&format!(
+                                    "Copied {} to working directory",
+                                    dest_filename
+                                ));
+                            }
+                            Err(e) => {
+                                warn!("Failed to copy Office file {:?}: {}", path, e);
+                                self.set_status(&format!("Failed to copy file: {}", e));
+                            }
                         }
-                        _ => self.set_status("Unsupported file type"),
+                    } else {
+                        self.set_status(
+                            "Set a working directory first (File → Open Folder)",
+                        );
                     }
+                } else {
+                    self.set_status("Unsupported file type");
                 }
             } else if let Some(ref bytes) = file.bytes {
                 // Dropped from another app (bytes only, no path)

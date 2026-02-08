@@ -766,6 +766,180 @@ fn horizontal_rule_x_bounds(local_width: f32, horizontal_padding: f32) -> Option
     Some((start, end))
 }
 
+/// Known emoji-to-colored-text substitutions.
+/// Returns a list of (text_segment, optional_color) pairs.
+fn split_emoji_segments(text: &str) -> Vec<(String, Option<egui::Color32>)> {
+    // Color constants for emoji substitutions
+    const GREEN: egui::Color32 = egui::Color32::from_rgb(34, 197, 94);
+    const RED: egui::Color32 = egui::Color32::from_rgb(239, 68, 68);
+    const YELLOW: egui::Color32 = egui::Color32::from_rgb(234, 179, 8);
+    const BLUE: egui::Color32 = egui::Color32::from_rgb(59, 130, 246);
+    const ORANGE: egui::Color32 = egui::Color32::from_rgb(249, 115, 22);
+
+    // Map of emoji -> (replacement_char, color)
+    let emoji_map: &[(&str, &str, egui::Color32)] = &[
+        ("✅", "☑ ", GREEN),
+        ("🟢", "● ", GREEN),
+        ("❌", "✗ ", RED),
+        ("🔴", "● ", RED),
+        ("⚠️", "▲ ", ORANGE),
+        ("⚠", "▲ ", ORANGE), // without variation selector
+        ("🟡", "● ", YELLOW),
+        ("🟠", "● ", ORANGE),
+        ("🔵", "● ", BLUE),
+        ("🟣", "● ", egui::Color32::from_rgb(168, 85, 247)),
+        ("⛔", "⊘ ", RED),
+        ("🚫", "⊘ ", RED),
+        ("💚", "♥ ", GREEN),
+        ("❤️", "♥ ", RED),
+        ("❤", "♥ ", RED), // without variation selector
+        ("🔶", "◆ ", ORANGE),
+        ("🔷", "◆ ", BLUE),
+        ("✓", "✓ ", GREEN),
+        ("✗", "✗ ", RED),
+    ];
+
+    if text.is_empty() {
+        return vec![(String::new(), None)];
+    }
+
+    let mut segments: Vec<(String, Option<egui::Color32>)> = Vec::new();
+    let mut remaining = text;
+
+    while !remaining.is_empty() {
+        // Try to find the earliest emoji match
+        let mut earliest_match: Option<(usize, &str, &str, egui::Color32)> = None;
+
+        for &(emoji, replacement, color) in emoji_map {
+            if let Some(pos) = remaining.find(emoji) {
+                if earliest_match.is_none() || pos < earliest_match.unwrap().0 {
+                    earliest_match = Some((pos, emoji, replacement, color));
+                }
+            }
+        }
+
+        match earliest_match {
+            Some((pos, emoji, replacement, color)) => {
+                // Push any text before the emoji
+                if pos > 0 {
+                    segments.push((remaining[..pos].to_string(), None));
+                }
+                // Push the colored replacement
+                segments.push((replacement.to_string(), Some(color)));
+                remaining = &remaining[pos + emoji.len()..];
+            }
+            None => {
+                // No more emojis, push the rest
+                segments.push((remaining.to_string(), None));
+                break;
+            }
+        }
+    }
+
+    if segments.is_empty() {
+        segments.push((String::new(), None));
+    }
+
+    segments
+}
+
+/// Build a galley for a table cell, rendering inline markdown (bold, italic, code, etc.)
+/// and applying emoji color substitutions.
+fn build_cell_galley(
+    ui: &egui::Ui,
+    spans: &[InlineSpan],
+    base_color: egui::Color32,
+    wrap_width: f32,
+    font_id: &egui::FontId,
+    bold_font_id: &egui::FontId,
+    italic_font_id: &egui::FontId,
+    code_font_id: &egui::FontId,
+    code_bg: egui::Color32,
+    is_header: bool,
+) -> std::sync::Arc<egui::epaint::text::Galley> {
+    use egui::text::{LayoutJob, TextFormat};
+
+    let mut job = LayoutJob::default();
+    job.wrap.max_width = wrap_width;
+
+    for span in spans {
+        match span {
+            InlineSpan::Text {
+                text,
+                bold,
+                italic,
+                code,
+                strike,
+                underline,
+            } => {
+                // Split text into emoji and non-emoji segments for color handling
+                let segments = split_emoji_segments(text);
+                for segment in segments {
+                    let (segment_text, emoji_color) = segment;
+                    let chosen_font = if *code {
+                        code_font_id.clone()
+                    } else if *bold || is_header {
+                        bold_font_id.clone()
+                    } else if *italic {
+                        italic_font_id.clone()
+                    } else {
+                        font_id.clone()
+                    };
+
+                    let text_color = emoji_color.unwrap_or(base_color);
+
+                    let mut format = TextFormat {
+                        font_id: chosen_font,
+                        color: text_color,
+                        strikethrough: if *strike {
+                            egui::Stroke::new(1.0, text_color)
+                        } else {
+                            egui::Stroke::NONE
+                        },
+                        underline: if *underline {
+                            egui::Stroke::new(1.0, text_color)
+                        } else {
+                            egui::Stroke::NONE
+                        },
+                        ..Default::default()
+                    };
+
+                    if *code {
+                        format.background = code_bg;
+                    }
+                    if *bold || is_header {
+                        // egui LayoutJob doesn't have a "bold" flag, but we can use a
+                        // slightly larger font or rely on the font itself. Since we only
+                        // have Inter-Regular (no bold weight), we approximate bold by
+                        // using strong_text_color which makes it stand out.
+                        format.color = if *bold {
+                            ui.visuals().strong_text_color()
+                        } else {
+                            text_color
+                        };
+                    }
+                    if *italic {
+                        format.italics = true;
+                    }
+
+                    job.append(&segment_text, 0.0, format);
+                }
+            }
+            InlineSpan::Link { text, .. } => {
+                let format = TextFormat {
+                    font_id: font_id.clone(),
+                    color: egui::Color32::from_rgb(100, 149, 237), // cornflower blue
+                    underline: egui::Stroke::new(1.0, egui::Color32::from_rgb(100, 149, 237)),
+                    ..Default::default()
+                };
+                job.append(text, 0.0, format);
+            }
+        }
+    }
+
+    ui.fonts(|fonts| fonts.layout_job(job))
+}
+
 fn render_table_region(ui: &mut egui::Ui, region: &TableRegion, _table_index: usize) {
     let border = colors::border(ui.visuals());
     let table_bg = if ui.visuals().dark_mode {
@@ -804,6 +978,11 @@ fn render_table_region(ui: &mut egui::Ui, region: &TableRegion, _table_index: us
     let header_text_color = ui.visuals().strong_text_color();
     let body_text_color = ui.visuals().text_color();
 
+    let bold_font_id = egui::FontId::proportional(13.0);
+    let italic_font_id = egui::FontId::proportional(13.0);
+    let code_font_id = egui::FontId::monospace(12.0);
+    let code_bg = colors::code_bg(ui.visuals());
+
     let mut row_galleys: Vec<Vec<std::sync::Arc<egui::epaint::text::Galley>>> = Vec::new();
     let mut row_heights: Vec<f32> = Vec::new();
 
@@ -813,15 +992,26 @@ fn render_table_region(ui: &mut egui::Ui, region: &TableRegion, _table_index: us
 
         for (col_idx, col_width) in column_widths.iter().enumerate() {
             let text = cells.get(col_idx).map(String::as_str).unwrap_or("");
-            let text_color = if *is_header {
+            let base_color = if *is_header {
                 header_text_color
             } else {
                 body_text_color
             };
             let wrap_width = (*col_width - (text_padding.x * 2.0)).max(8.0);
-            let galley = ui.fonts(|fonts| {
-                fonts.layout(text.to_string(), font_id.clone(), text_color, wrap_width)
-            });
+
+            let spans = parse_inline_spans(text);
+            let galley = build_cell_galley(
+                ui,
+                &spans,
+                base_color,
+                wrap_width,
+                &font_id,
+                &bold_font_id,
+                &italic_font_id,
+                &code_font_id,
+                code_bg,
+                *is_header,
+            );
             row_height = row_height.max(galley.size().y + (text_padding.y * 2.0));
             galleys.push(galley);
         }
@@ -969,23 +1159,32 @@ fn render_spans(ui: &mut egui::Ui, spans: &[InlineSpan], size: f32) {
                     strike,
                     code,
                 } => {
-                    let mut rich = RichText::new(text).size(size);
-                    if *bold {
-                        rich = rich.strong();
+                    let segments = split_emoji_segments(text);
+                    for (segment_text, emoji_color) in segments {
+                        if segment_text.is_empty() {
+                            continue;
+                        }
+                        let mut rich = RichText::new(&segment_text).size(size);
+                        if *bold {
+                            rich = rich.strong();
+                        }
+                        if *italic {
+                            rich = rich.italics();
+                        }
+                        if *underline {
+                            rich = rich.underline();
+                        }
+                        if *strike {
+                            rich = rich.strikethrough();
+                        }
+                        if *code {
+                            rich = rich.monospace();
+                        }
+                        if let Some(color) = emoji_color {
+                            rich = rich.color(color);
+                        }
+                        ui.label(rich);
                     }
-                    if *italic {
-                        rich = rich.italics();
-                    }
-                    if *underline {
-                        rich = rich.underline();
-                    }
-                    if *strike {
-                        rich = rich.strikethrough();
-                    }
-                    if *code {
-                        rich = rich.monospace();
-                    }
-                    ui.label(rich);
                 }
             }
         }

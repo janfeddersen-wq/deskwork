@@ -46,11 +46,15 @@ pub use claude::{create_model, create_model_with_thinking};
 
 // Re-export executor
 pub use executor::{
-    event_channel, run_agent, EventReceiver, EventSender, ExecutorEvent, ImageData, RunAgentArgs,
+    event_channel, run_agent, DocumentData, EventReceiver, EventSender, ExecutorEvent, ImageData,
+    RunAgentArgs,
 };
 
 // Re-export image types for multimodal requests
-pub use serdes_ai_core::messages::ImageMediaType;
+pub use serdes_ai_core::messages::{DocumentMediaType, ImageMediaType};
+
+// Re-export message types for conversation history
+pub use serdes_ai_core::ModelRequest;
 
 // Re-export prompts
 pub use prompts::{build_system_prompt, SYSTEM_PROMPT};
@@ -61,21 +65,28 @@ pub use tools::{
     RunShellCommandTool, ToolRegistry,
 };
 
-// Re-export plugins
-pub use plugins::{
-    build_command_prompt, build_namespaced_mcp_map, build_plugin_prompt_block, command_suggestions,
-    command_suggestions_rich, discover_plugins, load_all_bundled_plugins,
-    load_bundled_legal_plugin, load_bundled_plugins, load_plugin, parse_frontmatter,
-    parse_slash_command, resolve_entry_placeholders, CommandFile, CommandFrontmatter,
-    ContextBudget, McpBridgeResult, McpServerEntry, McpServersFile, NamespacedMcpTool,
-    ParsedSlashCommand, Plugin, PluginAuthor, PluginContext, PluginLoadError, PluginManifest,
-    PluginMcpManager, PluginMcpTool, PluginRegistry, PluginRuntime, PluginStatus, SkillFile,
-    SkillFrontmatter, SlashCommandSuggestion, UnavailableConnector,
-};
+// Plugin MCP types (still used by executor for MCP server connections)
+pub use plugins::mcp_manager::{NamespacedMcpTool, PluginMcpManager};
+pub use plugins::mcp_tool::PluginMcpTool;
 
 // Re-export skills
 pub use skills::{
     discover_skills, extract_skills_if_needed, get_skill_path, SkillMetadata, SkillsContext,
+};
+
+// Re-export skill categories
+pub use skills::categories::{
+    build_mcp_map, load_bundled_categories, CategoryStatus, McpBridgeResult, SkillCategory,
+    SkillCategoryRegistry,
+};
+pub use skills::category_context::{build_category_context, CategoryContext, ContextBudget};
+pub use skills::commands::{
+    build_command_prompt, command_suggestions, command_suggestions_rich, get_command_handler,
+    parse_slash_command, ParsedSlashCommand, SlashCommandSuggestion,
+};
+pub use skills::types::{
+    parse_frontmatter, CommandFile, CommandFrontmatter, McpServerEntry, McpServersFile, SkillFile,
+    SkillFrontmatter,
 };
 
 // Re-export external tools

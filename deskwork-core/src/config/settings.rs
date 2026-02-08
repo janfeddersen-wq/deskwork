@@ -43,6 +43,9 @@ impl std::fmt::Display for Theme {
 pub const DEFAULT_MODEL: &str = "claude-code-claude-sonnet-4-20250514";
 pub const DEFAULT_PLUGIN_CONTEXT_TOKEN_BUDGET: u32 = 6000;
 
+/// Default list of enabled skill category IDs.
+///
+/// We keep this helper because serde's `default = "..."` needs a function.
 fn default_plugins_enabled() -> Vec<String> {
     Vec::new()
 }
@@ -172,15 +175,11 @@ pub struct Settings {
     /// Working directory for file operations.
     pub working_directory: Option<String>,
 
-    /// List of enabled plugin IDs.
+    /// List of enabled skill category IDs (historically named "plugins_enabled" for settings backward compatibility).
     #[serde(default = "default_plugins_enabled")]
     pub plugins_enabled: Vec<String>,
 
-    /// Optional plugin directory override.
-    #[serde(default)]
-    pub plugins_dir: Option<String>,
-
-    /// Token budget reserved for plugin context in prompts.
+    /// Token budget reserved for skill category context in prompts.
     #[serde(default = "default_plugin_context_token_budget")]
     pub plugin_context_token_budget: u32,
 }
@@ -204,7 +203,6 @@ impl Default for Settings {
             stream_markdown_enabled: default_stream_markdown_enabled(),
             working_directory: None,
             plugins_enabled: default_plugins_enabled(),
-            plugins_dir: None,
             plugin_context_token_budget: default_plugin_context_token_budget(),
         }
     }
@@ -439,7 +437,6 @@ mod tests {
         assert!(settings.working_directory.is_none());
         assert!(settings.available_models.is_empty());
         assert!(settings.plugins_enabled.is_empty());
-        assert!(settings.plugins_dir.is_none());
         assert_eq!(
             settings.plugin_context_token_budget,
             DEFAULT_PLUGIN_CONTEXT_TOKEN_BUDGET
@@ -459,7 +456,6 @@ mod tests {
         original.stream_markdown_enabled = false;
         original.working_directory = Some("/home/user/project".to_string());
         original.plugins_enabled = vec!["legal".to_string()];
-        original.plugins_dir = Some("/tmp/deskwork/plugins".to_string());
         original.plugin_context_token_budget = 7000;
 
         // Save
@@ -479,10 +475,6 @@ mod tests {
             Some("/home/user/project".to_string())
         );
         assert_eq!(loaded.plugins_enabled, vec!["legal".to_string()]);
-        assert_eq!(
-            loaded.plugins_dir,
-            Some("/tmp/deskwork/plugins".to_string())
-        );
         assert_eq!(loaded.plugin_context_token_budget, 7000);
     }
 
@@ -578,7 +570,6 @@ mod tests {
 
         let loaded = Settings::load(&db);
         assert!(loaded.plugins_enabled.is_empty());
-        assert!(loaded.plugins_dir.is_none());
         assert_eq!(
             loaded.plugin_context_token_budget,
             DEFAULT_PLUGIN_CONTEXT_TOKEN_BUDGET

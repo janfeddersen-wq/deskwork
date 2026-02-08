@@ -10,13 +10,15 @@ use tokio::sync::mpsc;
 use tracing::{debug, error, info, warn};
 
 use serdes_ai_agent::{agent, AgentStream, AgentStreamEvent, RunOptions, ToolExecutor};
-use serdes_ai_core::messages::{ImageMediaType, UserContent, UserContentPart};
+use serdes_ai_core::messages::{DocumentMediaType, ImageMediaType, UserContent, UserContentPart};
 use serdes_ai_core::ModelRequest;
 use serdes_ai_models::Model;
 use serdes_ai_tools::{RunContext as ToolRunContext, Tool, ToolError, ToolReturn};
 
 use crate::config::Settings;
-use crate::plugins::{McpServerEntry, PluginMcpManager, PluginMcpTool};
+use crate::plugins::mcp_manager::PluginMcpManager;
+use crate::plugins::mcp_tool::PluginMcpTool;
+use crate::skills::types::McpServerEntry;
 use crate::tools::ToolRegistry;
 
 // =============================================================================
@@ -59,6 +61,8 @@ pub enum ExecutorEvent {
     Done {
         input_tokens: u32,
         output_tokens: u32,
+        /// Complete message history from this run for conversation continuity.
+        message_history: Vec<ModelRequest>,
     },
 
     /// Error occurred.
@@ -130,6 +134,13 @@ pub struct ImageData {
     pub media_type: ImageMediaType,
 }
 
+/// Document data with media type for document attachments (e.g. PDF).
+pub struct DocumentData {
+    pub data: Vec<u8>,
+    pub media_type: DocumentMediaType,
+    pub filename: Option<String>,
+}
+
 /// Arguments for [`run_agent`].
 pub struct RunAgentArgs {
     pub access_token: String,
@@ -138,6 +149,7 @@ pub struct RunAgentArgs {
     pub system_prompt: String,
     pub user_input: String,
     pub images: Vec<ImageData>,
+    pub documents: Vec<DocumentData>,
     pub message_history: Vec<ModelRequest>,
     pub plugin_mcp_configs: HashMap<String, McpServerEntry>,
     pub event_sender: EventSender,
@@ -163,6 +175,7 @@ pub struct RunAgentArgs {
 ///     system_prompt,
 ///     user_input: "Help me write a function".to_string(),
 ///     images: vec![],
+///     documents: vec![],
 ///     message_history: vec![],
 ///     plugin_mcp_configs: HashMap::new(),
 ///     event_sender: tx,
@@ -190,6 +203,7 @@ pub fn run_agent(args: RunAgentArgs) -> tokio::task::JoinHandle<()> {
             system_prompt,
             user_input,
             images,
+            documents,
             message_history,
             plugin_mcp_configs,
             event_sender,
@@ -252,8 +266,9 @@ pub fn run_agent(args: RunAgentArgs) -> tokio::task::JoinHandle<()> {
             RunOptions::default().message_history(message_history)
         };
 
-        // Build user content (text + optional images)
-        let user_content = if images.is_empty() {
+        // Build user content (text + optional images + optional documents)
+        let has_attachments = !images.is_empty() || !documents.is_empty();
+        let user_content = if !has_attachments {
             UserContent::text(&user_input)
         } else {
             let mut parts = Vec::new();
@@ -266,10 +281,21 @@ pub fn run_agent(args: RunAgentArgs) -> tokio::task::JoinHandle<()> {
                     img.media_type,
                 ));
             }
+            for doc in &documents {
+                let document = serdes_ai_core::messages::DocumentContent::binary(
+                    doc.data.clone(),
+                    doc.media_type,
+                );
+                parts.push(UserContentPart::Document { document });
+            }
             UserContent::parts(parts)
         };
 
-        info!("Sending request with {} images", images.len());
+        info!(
+            "Sending request with {} images, {} documents",
+            images.len(),
+            documents.len()
+        );
 
         // Run with streaming
         match AgentStream::new(&agent, user_content, (), options).await {
@@ -363,11 +389,11 @@ fn convert_event(event: AgentStreamEvent) -> Option<ExecutorEvent> {
             })
         }
 
-        AgentStreamEvent::RunComplete { .. } => {
-            // We'll get usage from OutputReady or calculate it
+        AgentStreamEvent::RunComplete { messages, .. } => {
             Some(ExecutorEvent::Done {
                 input_tokens: 0,
                 output_tokens: 0,
+                message_history: messages,
             })
         }
 

@@ -35,6 +35,20 @@ pub fn render(app: &mut DeskworkApp, ui: &mut egui::Ui) {
             });
     }
 
+    // Render document attachment previews if any
+    if !app.pending_documents.is_empty() {
+        egui::Frame::none()
+            .inner_margin(egui::Margin {
+                left: 12.0,
+                right: 12.0,
+                top: 8.0,
+                bottom: 0.0,
+            })
+            .show(ui, |ui| {
+                attachments::render_document_attachments(&mut app.pending_documents, ui);
+            });
+    }
+
     egui::Frame::none()
         .fill(code_bg)
         .inner_margin(egui::Margin {
@@ -133,7 +147,10 @@ pub fn render(app: &mut DeskworkApp, ui: &mut egui::Ui) {
             // Slash command suggestions
             if app.input.trim_start().starts_with('/') {
                 let prefix = app.input.split_whitespace().next().unwrap_or_default();
-                let suggestions = app.plugin_runtime.command_suggestions_rich(prefix);
+                let suggestions = deskwork_core::skills::commands::command_suggestions_rich(
+                    &app.category_registry,
+                    prefix,
+                );
 
                 if !suggestions.is_empty() {
                     ui.add_space(6.0);
@@ -143,20 +160,22 @@ pub fn render(app: &mut DeskworkApp, ui: &mut egui::Ui) {
                             .color(muted),
                     );
 
-                    let mut grouped: BTreeMap<String, Vec<deskwork_core::SlashCommandSuggestion>> =
-                        BTreeMap::new();
+                    let mut grouped: BTreeMap<
+                        String,
+                        Vec<deskwork_core::skills::commands::SlashCommandSuggestion>,
+                    > = BTreeMap::new();
                     for suggestion in suggestions.into_iter().take(12) {
                         grouped
-                            .entry(suggestion.plugin_id.clone())
+                            .entry(suggestion.category_id.clone())
                             .or_default()
                             .push(suggestion);
                     }
 
                     let mut selected: Option<String> = None;
 
-                    for (plugin_id, items) in grouped {
+                    for (category_id, items) in grouped {
                         ui.add_space(4.0);
-                        ui.label(RichText::new(plugin_id).size(11.0).strong().color(muted));
+                        ui.label(RichText::new(category_id).size(11.0).strong().color(muted));
 
                         for suggestion in items {
                             let short_description = if suggestion.description.trim().is_empty() {

@@ -15,6 +15,9 @@ const THUMBNAIL_SIZE: u32 = 80;
 /// Maximum image dimension before resizing for sending
 const MAX_IMAGE_DIMENSION: u32 = 1024;
 
+/// Maximum PDF file size (32 MB)
+const MAX_PDF_SIZE: usize = 32 * 1024 * 1024;
+
 /// Supported image extensions
 const IMAGE_EXTENSIONS: &[&str] = &["png", "jpg", "jpeg", "gif", "webp", "bmp"];
 
@@ -22,6 +25,11 @@ const IMAGE_EXTENSIONS: &[&str] = &["png", "jpg", "jpeg", "gif", "webp", "bmp"];
 const TEXT_EXTENSIONS: &[&str] = &[
     "txt", "md", "markdown", "rst", "csv", "json", "yaml", "yml", "toml", "log", "xml", "html",
     "htm", "rs", "py", "js", "ts", "java", "c", "h", "cpp", "go", "sh", "sql",
+];
+
+/// Supported Office document extensions (copy-to-workdir on drop)
+const OFFICE_EXTENSIONS: &[&str] = &[
+    "doc", "docx", "xls", "xlsx", "ppt", "pptx", "odt", "ods", "odp",
 ];
 
 /// A pending image attachment
@@ -32,6 +40,15 @@ pub struct PendingImage {
     /// Thumbnail texture for preview
     pub thumbnail: egui::TextureHandle,
     /// PNG bytes for sending (resized)
+    pub data: Vec<u8>,
+}
+
+/// A pending document attachment (e.g. PDF).
+#[derive(Clone)]
+pub struct PendingDocument {
+    /// Original filename.
+    pub filename: String,
+    /// Raw document bytes.
     pub data: Vec<u8>,
 }
 
@@ -48,6 +65,22 @@ pub fn is_text_file(path: &Path) -> bool {
     path.extension()
         .and_then(|ext| ext.to_str())
         .map(|ext| TEXT_EXTENSIONS.contains(&ext.to_lowercase().as_str()))
+        .unwrap_or(false)
+}
+
+/// Check if a path is a PDF file
+pub fn is_pdf_file(path: &Path) -> bool {
+    path.extension()
+        .and_then(|ext| ext.to_str())
+        .map(|ext| ext.to_lowercase() == "pdf")
+        .unwrap_or(false)
+}
+
+/// Check if a path is a supported Office document for copy-to-workdir
+pub fn is_office_file(path: &Path) -> bool {
+    path.extension()
+        .and_then(|ext| ext.to_str())
+        .map(|ext| OFFICE_EXTENSIONS.contains(&ext.to_lowercase().as_str()))
         .unwrap_or(false)
 }
 
@@ -88,6 +121,27 @@ pub fn process_image_from_bytes(
 
     let filename = filename.unwrap_or_else(|| "pasted_image.png".to_string());
     process_image_internal(img, filename, ctx)
+}
+
+/// Process a PDF file from a file path
+pub fn process_pdf_from_path(path: &Path) -> anyhow::Result<PendingDocument> {
+    let data = std::fs::read(path)?;
+
+    if data.len() > MAX_PDF_SIZE {
+        anyhow::bail!(
+            "PDF file too large ({:.1} MB, max {} MB)",
+            data.len() as f64 / (1024.0 * 1024.0),
+            MAX_PDF_SIZE / (1024 * 1024)
+        );
+    }
+
+    let filename = path
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("document.pdf")
+        .to_string();
+
+    Ok(PendingDocument { filename, data })
 }
 
 /// Internal image processing
@@ -210,4 +264,63 @@ pub fn render_attachments(attachments: &mut Vec<PendingImage>, ui: &mut egui::Ui
     );
 
     ui.add_space(8.0);
+}
+
+/// Render document attachment previews above the input
+pub fn render_document_attachments(documents: &mut Vec<PendingDocument>, ui: &mut egui::Ui) {
+    if documents.is_empty() {
+        return;
+    }
+
+    ui.horizontal(|ui| {
+        let mut to_remove = None;
+
+        for (idx, doc) in documents.iter().enumerate() {
+            ui.vertical(|ui| {
+                // PDF icon placeholder
+                let icon_size = egui::vec2(60.0, 70.0);
+                let (rect, _response) = ui.allocate_exact_size(icon_size, egui::Sense::hover());
+
+                // Draw a document icon background
+                let muted = crate::ui::colors::muted(ui.visuals());
+                let bg = crate::ui::colors::tool_bg(ui.visuals());
+                ui.painter().rect_filled(rect, 8.0, bg);
+                ui.painter().text(
+                    rect.center(),
+                    egui::Align2::CENTER_CENTER,
+                    "📄",
+                    egui::FontId::proportional(28.0),
+                    muted,
+                );
+
+                // Filename + size + remove button
+                ui.horizontal(|ui| {
+                    let name = if doc.filename.len() > 12 {
+                        format!("{}...", &doc.filename[..10])
+                    } else {
+                        doc.filename.clone()
+                    };
+                    let size_kb = doc.data.len() as f64 / 1024.0;
+                    let size_label = if size_kb > 1024.0 {
+                        format!("{:.1} MB", size_kb / 1024.0)
+                    } else {
+                        format!("{:.0} KB", size_kb)
+                    };
+                    ui.label(egui::RichText::new(format!("{name} ({size_label})")).size(10.0));
+
+                    if ui.small_button("×").clicked() {
+                        to_remove = Some(idx);
+                    }
+                });
+            });
+
+            ui.add_space(8.0);
+        }
+
+        if let Some(idx) = to_remove {
+            documents.remove(idx);
+        }
+    });
+
+    ui.add_space(4.0);
 }

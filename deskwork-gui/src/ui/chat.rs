@@ -80,18 +80,17 @@ fn render_welcome(ui: &mut egui::Ui) {
 fn render_messages(app: &mut DeskworkApp, ui: &mut egui::Ui) {
     let max_width = ui.available_width() * 0.8;
 
-    let active_plugins = app
-        .plugin_runtime
-        .registry()
-        .enabled_plugins()
+    let active_categories = app
+        .category_registry
+        .enabled_categories()
         .into_iter()
-        .map(|p| p.id.clone())
+        .map(|c| c.name.clone())
         .collect::<Vec<_>>();
 
-    if !active_plugins.is_empty() {
+    if !active_categories.is_empty() {
         ui.add_space(4.0);
         ui.label(
-            RichText::new(format!("Active plugins: {}", active_plugins.join(", ")))
+            RichText::new(format!("Active: {}", active_categories.join(", ")))
                 .size(11.0)
                 .color(colors::muted(ui.visuals())),
         );

@@ -1,15 +1,21 @@
+//! Unified context builder for skill categories.
+//!
+//! Builds the system prompt section that injects knowledge from enabled
+//! skill categories, connector status, and MCP info.
+
 use std::collections::HashSet;
 
-use crate::plugins::mcp_bridge::McpBridgeResult;
-use crate::plugins::registry::PluginRegistry;
+use crate::skills::categories::{McpBridgeResult, SkillCategoryRegistry};
 
+/// Built prompt context for injection into the system prompt.
 #[derive(Debug, Clone)]
-pub struct PluginContext {
+pub struct CategoryContext {
     pub prompt: String,
     pub estimated_tokens: usize,
     pub truncated: bool,
 }
 
+/// Budget controlling how many tokens the category context may use.
 #[derive(Debug, Clone, Copy)]
 pub struct ContextBudget {
     pub max_tokens: usize,
@@ -17,23 +23,27 @@ pub struct ContextBudget {
 
 impl Default for ContextBudget {
     fn default() -> Self {
-        Self { max_tokens: 2_000 }
+        Self { max_tokens: 6_000 }
     }
 }
 
-pub fn build_plugin_prompt_block(
-    registry: &PluginRegistry,
+/// Build the system prompt injection block for enabled skill categories.
+///
+/// This is the category-based successor to the old plugin context builder.
+pub fn build_category_context(
+    registry: &SkillCategoryRegistry,
     mcp: &McpBridgeResult,
     budget: ContextBudget,
-) -> PluginContext {
-    let enabled_plugins = registry.enabled_plugins();
+) -> CategoryContext {
+    let mut enabled_categories = registry.enabled_categories();
+    enabled_categories.sort_by(|a, b| a.name.cmp(&b.name));
 
     let mut out = String::new();
-    out.push_str("## Plugins\n\n");
+    out.push_str("## Skill Categories\n\n");
 
-    if enabled_plugins.is_empty() {
-        out.push_str("No plugins are currently enabled.\n");
-        return PluginContext {
+    if enabled_categories.is_empty() {
+        out.push_str("No skill categories enabled.\n");
+        return CategoryContext {
             estimated_tokens: estimate_tokens(&out),
             prompt: out,
             truncated: false,
@@ -41,95 +51,109 @@ pub fn build_plugin_prompt_block(
     }
 
     let available_connectors = available_connector_names(mcp);
+
     let mut base_sections = String::new();
     let mut skill_sections: Vec<String> = Vec::new();
 
-    base_sections.push_str("Enabled plugins:\n");
-    for plugin in &enabled_plugins {
+    base_sections.push_str("Enabled categories:\n");
+
+    for category in &enabled_categories {
         base_sections.push_str(&format!(
-            "- {} (`{}`) v{}\n  - {}\n",
-            plugin.name, plugin.id, plugin.version, plugin.description
+            "- {} (`{}`)\n  - {}\n",
+            category.name, category.id, category.description
         ));
 
+        // Slash commands
         base_sections.push_str("  - Commands:\n");
-        if plugin.commands.is_empty() {
+        if category.commands.is_empty() {
             base_sections.push_str("    - none\n");
         } else {
-            for command in &plugin.commands {
-                base_sections.push_str(&format!(
-                    "    - {}: {}\n",
-                    command.slash_command, command.description
-                ));
+            let mut commands = category.commands.iter().collect::<Vec<_>>();
+            commands.sort_by(|a, b| a.slash_command.cmp(&b.slash_command));
+
+            for command in commands {
+                match command.argument_hint.as_deref() {
+                    Some(hint) if !hint.trim().is_empty() => base_sections.push_str(&format!(
+                        "    - {}: {} (args: {})\n",
+                        command.slash_command,
+                        command.description,
+                        hint.trim()
+                    )),
+                    _ => base_sections.push_str(&format!(
+                        "    - {}: {}\n",
+                        command.slash_command, command.description
+                    )),
+                }
             }
         }
 
-        // Always include local config, even under truncation.
-        base_sections.push_str("  - Local config:\n");
-        match plugin.local_config.as_deref() {
-            Some(local) if !local.trim().is_empty() => {
-                let (resolved_local, notes) =
-                    resolve_category_placeholders(local.trim(), &available_connectors);
-                base_sections.push_str("```markdown\n");
-                base_sections.push_str(&resolved_local);
-                base_sections.push_str("\n```\n");
-                append_placeholder_notes(&mut base_sections, &notes, 4);
-            }
-            _ => base_sections.push_str("    [none]\n"),
+        // Connector docs (always included, even under truncation).
+        base_sections.push_str("  - Connector notes:\n");
+        if category.connectors_doc.trim().is_empty() {
+            base_sections.push_str("    [none]\n");
+        } else {
+            let (resolved, notes) =
+                resolve_category_placeholders(category.connectors_doc.trim(), &available_connectors);
+
+            base_sections.push_str("```markdown\n");
+            base_sections.push_str(resolved.trim());
+            base_sections.push_str("\n```\n");
+            append_placeholder_notes(&mut base_sections, &notes, 4);
         }
 
-        if !plugin.errors.is_empty() {
-            base_sections.push_str("  - Plugin issues:\n");
-            for error in &plugin.errors {
+        // Include category issues if they exist (even if category is active).
+        if !category.errors.is_empty() {
+            base_sections.push_str("  - Category issues:\n");
+            for error in &category.errors {
                 base_sections.push_str(&format!("    - {}\n", error));
             }
         }
 
-        if !plugin.skills.is_empty() {
-            for skill in &plugin.skills {
-                let mut section = String::new();
-                let (resolved_skill, notes) =
-                    resolve_category_placeholders(&skill.content, &available_connectors);
+        // Skill sections (these are lower-priority and get truncated first).
+        for skill in &category.skills {
+            let mut section = String::new();
 
-                section.push_str(&format!(
-                    "\n### Skill: {} ({})\n",
-                    skill.name,
-                    skill.path.display()
-                ));
-                section.push_str(&format!("Description: {}\n", skill.description));
-                section.push_str("```markdown\n");
-                section.push_str(resolved_skill.trim());
-                section.push_str("\n```\n");
-                append_placeholder_notes(&mut section, &notes, 0);
+            let (resolved_skill, notes) =
+                resolve_category_placeholders(&skill.content, &available_connectors);
 
-                skill_sections.push(section);
-            }
+            section.push_str(&format!(
+                "\n### Skill: {} ({})\n",
+                skill.name,
+                skill.path.display()
+            ));
+            section.push_str(&format!(
+                "Category: {} (`{}`)\n",
+                category.name, category.id
+            ));
+            section.push_str(&format!("Description: {}\n", skill.description));
+            section.push_str("```markdown\n");
+            section.push_str(resolved_skill.trim());
+            section.push_str("\n```\n");
+            append_placeholder_notes(&mut section, &notes, 0);
+
+            skill_sections.push(section);
         }
     }
 
+    // MCP connector status
     let mut mcp_section = String::new();
     mcp_section.push_str("\n## MCP Connectors\n\n");
-    if mcp.configs.is_empty() && mcp.unavailable.is_empty() {
+    if mcp.configs.is_empty() {
         mcp_section.push_str("No active MCP connectors configured.\n");
     } else {
-        if !mcp.configs.is_empty() {
-            mcp_section.push_str("Available connectors:\n");
-            for (name, cfg) in &mcp.configs {
-                mcp_section.push_str(&format!("- `{name}` ({})\n", cfg.r#type));
-            }
-        }
+        let mut configs = mcp.configs.iter().collect::<Vec<_>>();
+        configs.sort_by(|(a, _), (b, _)| a.cmp(b));
 
-        if !mcp.unavailable.is_empty() {
-            mcp_section.push_str("Unavailable connectors:\n");
-            for item in &mcp.unavailable {
-                mcp_section.push_str(&format!("- `{}`: {}\n", item.namespaced_name, item.reason));
-            }
+        mcp_section.push_str("Available connectors:\n");
+        for (name, cfg) in configs {
+            mcp_section.push_str(&format!("- `{name}` ({})\n", cfg.r#type));
         }
     }
 
+    // Token budget management: drop lower-priority skills first (from the end).
     let mut truncated = false;
     let mut included_skills = skill_sections;
 
-    // Trim lower-priority skills first (from the end).
     loop {
         let mut candidate = String::new();
         candidate.push_str(&out);
@@ -148,23 +172,23 @@ pub fn build_plugin_prompt_block(
         truncated = true;
     }
 
-    // If still too large (base/local config alone), keep it and mark truncated.
-    let estimated = estimate_tokens(&out);
-    if estimated > budget.max_tokens {
+    // If still too large (base/connector docs alone), keep it and mark truncated.
+    if estimate_tokens(&out) > budget.max_tokens {
         truncated = true;
     }
 
     if truncated {
-        out.push_str("\n[plugin context truncated: lower-priority skills omitted to fit budget]\n");
+        out.push_str("\n[category context truncated: lower-priority skills omitted to fit budget]\n");
     }
 
-    PluginContext {
+    CategoryContext {
         estimated_tokens: estimate_tokens(&out),
         prompt: out,
         truncated,
     }
 }
 
+/// Extract available connector names (lowercased, without category namespace) from the MCP bridge.
 fn available_connector_names(mcp: &McpBridgeResult) -> HashSet<String> {
     mcp.configs
         .keys()
@@ -177,6 +201,9 @@ fn available_connector_names(mcp: &McpBridgeResult) -> HashSet<String> {
         .collect()
 }
 
+/// Resolve `~~category` placeholders in markdown, based on which connectors are configured.
+///
+/// Returns `(resolved_text, notes)`.
 fn resolve_category_placeholders(
     input: &str,
     connectors: &HashSet<String>,
@@ -184,6 +211,7 @@ fn resolve_category_placeholders(
     let mut out = input.to_string();
     let mut notes = Vec::new();
 
+    // Keep this table centralized and boring. Boring code is good code.
     let categories = [
         (
             "cloud storage",
@@ -243,6 +271,22 @@ fn resolve_category_placeholders(
             vec!["~~calendar", "~~Calendar"],
             vec!["calendar", "outlook-calendar", "gcal", "ms365"],
         ),
+        // New categories for finance/data plugins:
+        (
+            "data warehouse",
+            vec!["~~data warehouse", "~~Data warehouse", "~~Data Warehouse"],
+            vec!["snowflake", "databricks", "bigquery", "redshift", "postgresql"],
+        ),
+        (
+            "erp",
+            vec!["~~erp", "~~ERP"],
+            vec!["netsuite", "sap", "quickbooks", "xero"],
+        ),
+        (
+            "analytics",
+            vec!["~~analytics", "~~Analytics"],
+            vec!["tableau", "looker", "powerbi", "power-bi"],
+        ),
     ];
 
     for (category, placeholders, candidates) in categories {
@@ -284,6 +328,5 @@ fn append_placeholder_notes(out: &mut String, notes: &[String], indent: usize) {
 }
 
 fn estimate_tokens(text: &str) -> usize {
-    // Very rough heuristic: 1 token ~= 4 chars for English-ish text.
     text.chars().count().div_ceil(4)
 }
