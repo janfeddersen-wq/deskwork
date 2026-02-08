@@ -35,8 +35,16 @@ pub struct SkillCategory {
     pub commands: Vec<CommandFile>,
     pub mcp_servers: HashMap<String, McpServerEntry>,
     pub connectors_doc: String,
+    pub playbook_template: String,
     pub status: CategoryStatus,
     pub errors: Vec<String>,
+}
+
+impl SkillCategory {
+    /// Whether this category provides a playbook template for user configuration.
+    pub fn has_playbook_template(&self) -> bool {
+        !self.playbook_template.trim().is_empty()
+    }
 }
 
 /// Registry of all available skill categories.
@@ -209,6 +217,7 @@ fn load_bundled_category(bundled: &BundledCategory) -> SkillCategory {
     };
 
     let connectors_doc = bundled.connectors_md.to_string();
+    let playbook_template = bundled.playbook_template.to_string();
 
     let enabled = false;
     let status = compute_status(enabled, &errors);
@@ -222,6 +231,7 @@ fn load_bundled_category(bundled: &BundledCategory) -> SkillCategory {
         commands,
         mcp_servers,
         connectors_doc,
+        playbook_template,
         status,
         errors,
     }

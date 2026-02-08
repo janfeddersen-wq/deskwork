@@ -3,6 +3,7 @@
 //! Settings are persisted to the SQLite database as JSON.
 
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 
 // =============================================================================
 // Theme Selection
@@ -48,6 +49,10 @@ pub const DEFAULT_PLUGIN_CONTEXT_TOKEN_BUDGET: u32 = 6000;
 /// We keep this helper because serde's `default = "..."` needs a function.
 fn default_plugins_enabled() -> Vec<String> {
     Vec::new()
+}
+
+fn default_category_playbooks() -> HashMap<String, String> {
+    HashMap::new()
 }
 
 fn default_plugin_context_token_budget() -> u32 {
@@ -182,6 +187,10 @@ pub struct Settings {
     /// Token budget reserved for skill category context in prompts.
     #[serde(default = "default_plugin_context_token_budget")]
     pub plugin_context_token_budget: u32,
+
+    /// User-edited playbook content per skill category (maps category_id → markdown content).
+    #[serde(default = "default_category_playbooks")]
+    pub category_playbooks: HashMap<String, String>,
 }
 
 impl Default for Settings {
@@ -204,6 +213,7 @@ impl Default for Settings {
             working_directory: None,
             plugins_enabled: default_plugins_enabled(),
             plugin_context_token_budget: default_plugin_context_token_budget(),
+            category_playbooks: default_category_playbooks(),
         }
     }
 }
@@ -575,6 +585,39 @@ mod tests {
             DEFAULT_PLUGIN_CONTEXT_TOKEN_BUDGET
         );
         assert!(loaded.stream_markdown_enabled);
+    }
+
+    #[test]
+    fn test_settings_category_playbooks_default_on_missing() {
+        let (_temp, db) = setup_test_db();
+
+        // Save settings JSON without category_playbooks field (simulates old config)
+        let json = r#"{"model":"test","max_tokens":4096,"temperature":0.7,"extended_thinking":false,"thinking_budget":10000,"theme":"Dark","show_thinking":true,"render_mode":"Auto"}"#;
+        db.set_setting("settings", json).unwrap();
+
+        let loaded = Settings::load(&db);
+        assert!(
+            loaded.category_playbooks.is_empty(),
+            "Should default to empty HashMap when field missing"
+        );
+    }
+
+    #[test]
+    fn test_settings_category_playbooks_roundtrip() {
+        let (_temp, db) = setup_test_db();
+
+        let mut settings = Settings::default();
+        settings.category_playbooks.insert(
+            "legal".to_string(),
+            "# My Playbook\nCustom content".to_string(),
+        );
+        settings.save(&db).unwrap();
+
+        let loaded = Settings::load(&db);
+        assert_eq!(
+            loaded.category_playbooks.get("legal").map(String::as_str),
+            Some("# My Playbook\nCustom content")
+        );
     }
 
     #[test]

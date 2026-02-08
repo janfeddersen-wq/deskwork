@@ -3,7 +3,7 @@
 //! Builds the system prompt section that injects knowledge from enabled
 //! skill categories, connector status, and MCP info.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use crate::skills::categories::{McpBridgeResult, SkillCategoryRegistry};
 
@@ -34,6 +34,7 @@ pub fn build_category_context(
     registry: &SkillCategoryRegistry,
     mcp: &McpBridgeResult,
     budget: ContextBudget,
+    playbooks: &HashMap<String, String>,
 ) -> CategoryContext {
     let mut enabled_categories = registry.enabled_categories();
     enabled_categories.sort_by(|a, b| a.name.cmp(&b.name));
@@ -132,6 +133,27 @@ pub fn build_category_context(
             append_placeholder_notes(&mut section, &notes, 0);
 
             skill_sections.push(section);
+        }
+
+        // Inject user-configured playbook if available for this category.
+        if let Some(playbook_content) = playbooks.get(&category.id) {
+            if !playbook_content.trim().is_empty() {
+                let mut playbook_section = String::new();
+                playbook_section.push_str(&format!(
+                    "\n### Playbook Configuration: {} (`{}`)\n",
+                    category.name, category.id
+                ));
+                playbook_section.push_str(
+                    "The user has configured the following playbook for this category. \
+                     Use these positions, thresholds, and preferences when executing skills and commands.\n",
+                );
+                playbook_section.push_str("```markdown\n");
+                playbook_section.push_str(playbook_content.trim());
+                playbook_section.push_str("\n```\n");
+                // Insert at the FRONT so playbook has higher priority than individual skills
+                // during token budget truncation.
+                skill_sections.insert(0, playbook_section);
+            }
         }
     }
 

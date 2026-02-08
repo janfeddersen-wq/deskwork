@@ -74,6 +74,11 @@ pub use skills::{
     discover_skills, extract_skills_if_needed, get_skill_path, SkillMetadata, SkillsContext,
 };
 
+pub use skills::playbook::{
+    get_playbook_path, get_playbooks_dir, playbook_file_name, read_playbook_from_disk,
+    write_playbook_to_disk,
+};
+
 // Re-export skill categories
 pub use skills::categories::{
     build_mcp_map, load_bundled_categories, CategoryStatus, McpBridgeResult, SkillCategory,

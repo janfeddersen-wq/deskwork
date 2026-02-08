@@ -131,6 +131,21 @@ pub struct ToolStatusUi {
     pub is_supported: bool,
 }
 
+/// State for the playbook editor overlay.
+#[derive(Debug, Clone)]
+pub struct PlaybookEditorState {
+    /// Category being edited.
+    pub category_id: String,
+    /// Display name of the category.
+    pub category_name: String,
+    /// Current editor content (mutable).
+    pub content: String,
+    /// Whether the content has been modified since opening.
+    pub is_dirty: bool,
+    /// Default template content (for "Reset to Default").
+    pub default_template: String,
+}
+
 /// Tracks the kind of block currently being streamed, so we know when to start a new block.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum StreamingBlockKind {
@@ -156,6 +171,9 @@ pub struct DeskworkApp {
 
     /// Cached MCP bridge result for skill categories.
     pub category_mcp: McpBridgeResult,
+
+    /// Playbook editor state (Some when editor is open).
+    pub editing_playbook: Option<PlaybookEditorState>,
 
     /// Skills context for system prompt injection.
     pub skills_context: Option<deskwork_core::SkillsContext>,
@@ -399,6 +417,7 @@ impl DeskworkApp {
             settings,
             category_registry,
             category_mcp,
+            editing_playbook: None,
             skills_context,
             auth_state,
             available_models,
@@ -678,8 +697,12 @@ impl DeskworkApp {
         let budget = ContextBudget {
             max_tokens: self.settings.plugin_context_token_budget as usize,
         };
-        let category_context =
-            build_category_context(&self.category_registry, &self.category_mcp, budget);
+        let category_context = build_category_context(
+            &self.category_registry,
+            &self.category_mcp,
+            budget,
+            &self.settings.category_playbooks,
+        );
 
         let skills_prompt = self
             .skills_context
@@ -944,7 +967,62 @@ impl DeskworkApp {
         self.save_settings();
     }
 
+    /// Open the playbook editor for a specific category.
+    pub fn open_playbook_editor(&mut self, category_id: &str) {
+        let category = self.category_registry.get_category(category_id);
+        let category_name = category
+            .map(|c| c.name.clone())
+            .unwrap_or_else(|| category_id.to_string());
+        let default_template = category
+            .map(|c| c.playbook_template.clone())
+            .unwrap_or_default();
 
+        // Load existing content from settings, or fall back to the default template
+        let content = self
+            .settings
+            .category_playbooks
+            .get(category_id)
+            .cloned()
+            .unwrap_or_else(|| default_template.clone());
+
+        self.editing_playbook = Some(PlaybookEditorState {
+            category_id: category_id.to_string(),
+            category_name,
+            content,
+            is_dirty: false,
+            default_template,
+        });
+    }
+
+    /// Save the current playbook and close the editor.
+    pub fn save_playbook(&mut self) {
+        if let Some(editor) = self.editing_playbook.take() {
+            // Save to settings DB
+            self.settings
+                .category_playbooks
+                .insert(editor.category_id.clone(), editor.content.clone());
+            self.save_settings();
+
+            // Also write to disk in the app's data directory
+            if let Err(e) =
+                deskwork_core::write_playbook_to_disk(&editor.category_id, &editor.content)
+            {
+                tracing::warn!("Failed to write playbook to disk: {}", e);
+                self.set_status(&format!(
+                    "Playbook saved to settings (file write failed: {})",
+                    e
+                ));
+                return;
+            }
+
+            self.set_status("Playbook saved");
+        }
+    }
+
+    /// Close the playbook editor without saving.
+    pub fn close_playbook_editor(&mut self) {
+        self.editing_playbook = None;
+    }
 
     /// Clear the chat history.
     pub fn clear_chat(&mut self) {

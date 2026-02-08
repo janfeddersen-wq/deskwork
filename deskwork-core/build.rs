@@ -34,6 +34,7 @@ struct CategoryAssets {
     readme: String,
     connectors_md: String,
     mcp_json: String,
+    playbook_template: String,
     // (relative_path, content)
     skills: Vec<(String, String)>,
     commands: Vec<(String, String)>,
@@ -64,16 +65,19 @@ fn discover_categories(plugins_root: &Path) -> io::Result<Vec<CategoryAssets>> {
         let readme_path = path.join("README.md");
         let connectors_path = path.join("CONNECTORS.md");
         let mcp_path = path.join(".mcp.json");
+        let playbook_path = path.join("PLAYBOOK_TEMPLATE.md");
 
         // Emit explicit rerun triggers for the files we care about.
         // This avoids relying on directory mtimes.
         emit_rerun_if_changed_optional(&readme_path);
         emit_rerun_if_changed_optional(&connectors_path);
         emit_rerun_if_changed_optional(&mcp_path);
+        emit_rerun_if_changed_optional(&playbook_path);
 
         let readme = read_optional_to_string(&readme_path)?;
         let connectors_md = read_optional_to_string(&connectors_path)?;
         let mcp_json = read_optional_to_string(&mcp_path)?;
+        let playbook_template = read_optional_to_string(&playbook_path)?;
 
         let skills = discover_skills(&path)?;
         let commands = discover_commands(&path)?;
@@ -88,6 +92,7 @@ fn discover_categories(plugins_root: &Path) -> io::Result<Vec<CategoryAssets>> {
             readme,
             connectors_md,
             mcp_json,
+            playbook_template,
             skills,
             commands,
         });
@@ -190,6 +195,7 @@ fn generate_bundled_categories_rs(categories: &[CategoryAssets]) -> String {
     out.push_str("    pub readme: &'static str,\n");
     out.push_str("    pub connectors_md: &'static str,\n");
     out.push_str("    pub mcp_json: &'static str,\n");
+    out.push_str("    pub playbook_template: &'static str,\n");
     out.push_str(
         "    pub skills: &'static [(&'static str, &'static str)],\n",
     );
@@ -214,6 +220,10 @@ fn generate_bundled_categories_rs(categories: &[CategoryAssets]) -> String {
         out.push_str(&format!(
             "        mcp_json: {},\n",
             to_rust_string_literal(&category.mcp_json)
+        ));
+        out.push_str(&format!(
+            "        playbook_template: {},\n",
+            to_rust_string_literal(&category.playbook_template)
         ));
 
         out.push_str("        skills: &[\n");

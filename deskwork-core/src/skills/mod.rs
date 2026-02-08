@@ -16,6 +16,7 @@ pub mod category_context;
 pub mod commands;
 pub mod context;
 pub mod discovery;
+pub mod playbook;
 pub mod types;
 
 pub use context::SkillsContext;

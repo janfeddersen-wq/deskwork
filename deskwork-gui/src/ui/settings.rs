@@ -108,6 +108,9 @@ pub fn render(app: &mut DeskworkApp, ctx: &egui::Context) {
                 });
             });
         });
+
+    // Playbook editor overlay (rendered on top of settings)
+    render_playbook_editor(app, ctx);
 }
 
 fn render_general_tab(app: &mut DeskworkApp, ui: &mut egui::Ui, muted: egui::Color32) {
@@ -617,6 +620,41 @@ fn render_skills_tab(app: &mut DeskworkApp, ui: &mut egui::Ui, muted: egui::Colo
                                 );
                             }
                         });
+
+                        // Right-aligned: playbook configure button
+                        if category.has_playbook_template() && enabled {
+                            ui.with_layout(
+                                egui::Layout::right_to_left(egui::Align::Center),
+                                |ui| {
+                                    let has_playbook = app
+                                        .settings
+                                        .category_playbooks
+                                        .contains_key(&category.id);
+
+                                    let button_text = if has_playbook {
+                                        "✏️ Edit Playbook"
+                                    } else {
+                                        "📋 Configure Playbook"
+                                    };
+
+                                    if ui
+                                        .add(
+                                            egui::Button::new(
+                                                RichText::new(button_text).size(11.0),
+                                            )
+                                            .rounding(Rounding::same(8.0)),
+                                        )
+                                        .clicked()
+                                    {
+                                        app.open_playbook_editor(&category.id);
+                                    }
+
+                                    if has_playbook {
+                                        ui.label(RichText::new("✅").size(12.0));
+                                    }
+                                },
+                            );
+                        }
                     });
 
                 });
@@ -730,6 +768,155 @@ fn render_skills_tab(app: &mut DeskworkApp, ui: &mut egui::Ui, muted: egui::Colo
                     .color(muted),
                 );
             }
+        }
+    }
+}
+
+/// Render the playbook editor overlay window.
+pub fn render_playbook_editor(app: &mut DeskworkApp, ctx: &egui::Context) {
+    if app.editing_playbook.is_none() {
+        return;
+    }
+
+    // Extract immutable data we need for window title and labels.
+    let title = app
+        .editing_playbook
+        .as_ref()
+        .map(|e| format!("{} — Playbook Configuration", e.category_name))
+        .unwrap_or_default();
+    let category_id = app
+        .editing_playbook
+        .as_ref()
+        .map(|e| e.category_id.clone())
+        .unwrap_or_default();
+    let muted = colors::muted(&ctx.style().visuals);
+
+    let mut save_clicked = false;
+    let mut cancel_clicked = false;
+    let mut reset_clicked = false;
+
+    egui::Window::new(&title)
+        .collapsible(false)
+        .resizable(true)
+        .default_width(600.0)
+        .default_height(500.0)
+        .anchor(egui::Align2::CENTER_CENTER, Vec2::ZERO)
+        .show(ctx, |ui| {
+            ui.spacing_mut().item_spacing = Vec2::new(8.0, 8.0);
+
+            // Header
+            ui.label(
+                RichText::new(
+                    "Configure your organization's playbook. This defines standard positions, \
+                     acceptable ranges, and escalation triggers used by the skills in this category.",
+                )
+                .size(12.0)
+                .color(muted),
+            );
+
+            // File path info
+            match deskwork_core::get_playbook_path(&category_id) {
+                Ok(path) => {
+                    ui.label(
+                        RichText::new(format!("📁 Saves to: {}", path.display()))
+                            .size(10.0)
+                            .color(muted),
+                    );
+                }
+                Err(_) => {
+                    ui.label(
+                        RichText::new("⚠️ Could not determine save path")
+                            .size(10.0)
+                            .color(muted),
+                    );
+                }
+            }
+
+            ui.separator();
+
+            // Editor area with mutable access
+            let available_height = (ui.available_height() - 60.0).max(200.0);
+            egui::ScrollArea::vertical()
+                .max_height(available_height)
+                .show(ui, |ui| {
+                    if let Some(ref mut editor) = app.editing_playbook {
+                        let response = ui.add(
+                            egui::TextEdit::multiline(&mut editor.content)
+                                .desired_width(f32::INFINITY)
+                                .desired_rows(20)
+                                .code_editor(),
+                        );
+                        if response.changed() {
+                            editor.is_dirty = true;
+                        }
+                    }
+                });
+
+            ui.separator();
+
+            // Footer buttons
+            ui.horizontal(|ui| {
+                if ui
+                    .add_sized(
+                        Vec2::new(80.0, 28.0),
+                        egui::Button::new(RichText::new("Save").strong())
+                            .fill(colors::USER_BG)
+                            .rounding(Rounding::same(8.0)),
+                    )
+                    .clicked()
+                {
+                    save_clicked = true;
+                }
+
+                if ui
+                    .add_sized(
+                        Vec2::new(80.0, 28.0),
+                        egui::Button::new("Cancel").rounding(Rounding::same(8.0)),
+                    )
+                    .clicked()
+                {
+                    cancel_clicked = true;
+                }
+
+                ui.add_space(16.0);
+
+                if ui
+                    .add(
+                        egui::Button::new(RichText::new("Reset to Default").size(11.0).color(muted))
+                            .rounding(Rounding::same(8.0)),
+                    )
+                    .clicked()
+                {
+                    reset_clicked = true;
+                }
+
+                // Dirty indicator
+                if let Some(ref editor) = app.editing_playbook {
+                    if editor.is_dirty {
+                        ui.with_layout(
+                            egui::Layout::right_to_left(egui::Align::Center),
+                            |ui| {
+                                ui.label(
+                                    RichText::new("● Unsaved changes")
+                                        .size(10.0)
+                                        .color(colors::USER_BG),
+                                );
+                            },
+                        );
+                    }
+                }
+            });
+        });
+
+    // Handle actions after the window's mutable borrows are released
+    if save_clicked {
+        app.save_playbook();
+    } else if cancel_clicked {
+        app.close_playbook_editor();
+    } else if reset_clicked {
+        if let Some(ref mut editor) = app.editing_playbook {
+            editor.content = editor.default_template.clone();
+            editor.is_dirty = true;
         }
     }
 }
