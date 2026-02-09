@@ -42,38 +42,11 @@ fn render_welcome(ui: &mut egui::Ui) {
         ui.add_space(8.0);
 
         ui.label(
-            RichText::new("Your Claude-powered coding assistant")
+            RichText::new("Your Claude-powered assistant")
                 .size(16.0)
                 .color(muted),
         );
         ui.add_space(32.0);
-
-        ui.label(
-            RichText::new("Start by typing a message below, or try one of these:").color(muted),
-        );
-        ui.add_space(16.0);
-
-        ui.horizontal_wrapped(|ui| {
-            ui.add_space(ui.available_width() / 4.0);
-
-            let suggestions = [
-                "Explore this directory",
-                "Find TODOs in the codebase",
-                "Help me write a function",
-            ];
-
-            for suggestion in suggestions {
-                if ui
-                    .add(
-                        egui::Button::new(RichText::new(suggestion).size(13.0))
-                            .rounding(Rounding::same(8.0)),
-                    )
-                    .clicked()
-                {
-                    let _text = suggestion.to_string();
-                }
-            }
-        });
     });
 }
 

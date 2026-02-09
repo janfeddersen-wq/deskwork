@@ -53,14 +53,3 @@ regex = "1.10"
 glob = "0.3"
 webbrowser = "1.0"
 reqwest = { version = "0.12", features = ["json"] }
-
-[patch."https://github.com/janfeddersen-wq/serdesAI.git"]
-serdes-ai = { path = "../serdesAI/serdes-ai" }
-serdes-ai-agent = { path = "../serdesAI/serdes-ai-agent" }
-serdes-ai-core = { path = "../serdesAI/serdes-ai-core" }
-serdes-ai-models = { path = "../serdesAI/serdes-ai-models" }
-serdes-ai-tools = { path = "../serdesAI/serdes-ai-tools" }
-serdes-ai-streaming = { path = "../serdesAI/serdes-ai-streaming" }
-serdes-ai-providers = { path = "../serdesAI/serdes-ai-providers" }
-serdes-ai-mcp = { path = "../serdesAI/serdes-ai-mcp" }
-serdes-ai-toolsets = { path = "../serdesAI/serdes-ai-toolsets" }

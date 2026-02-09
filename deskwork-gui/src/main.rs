@@ -1,3 +1,4 @@
+#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 //! Deskwork GUI Application
 //!
 //! A Claude-powered coding assistant with a native desktop interface.
